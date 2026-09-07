@@ -15,19 +15,9 @@ Lines queue through one worker thread, so typing ahead speaks in order.
 Wrap a word in _underscores_ or *stars* to emphasise it. Arrows pick a past
 line to say again (wrapping at both ends); !3 says the line numbered 3.
 
-All the logic lives in core.py, which imports no UI at all — run its checks
-with `python3 core.py --selftest`.
+All the logic lives in core.py, which imports no UI at all, so it is tested
+headless: `uv run pytest`.
 """
-
-import sys
-
-# The checks live in core, which imports no UI — so run them before textual is
-# reached, and `--selftest` keeps working on a machine without it installed.
-if "--selftest" in sys.argv:
-    import core
-
-    core.selftest()
-    sys.exit()
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -37,7 +27,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-import core
+from speak import core
 
 HINTS = "↑↓ pick · ⏎ speak · !3 redo · ⇥ saved · ^V voice · ^S save · ^C stop · /help"
 CLOSED = -1                 # a Picker dismissed without choosing
@@ -74,7 +64,7 @@ class Help(ModalScreen):
 
         with Vertical(id="help"):
             yield Static("speak · keys", id="help-title")
-            yield Static(body)
+            yield Static(body, id="help-body")
 
     def on_key(self, event) -> None:
         event.stop()
@@ -91,7 +81,8 @@ class Picker(ModalScreen[int]):
     BINDINGS = [
         Binding("escape", "close", "close"),
         Binding("tab", "close", "close", priority=True),
-        Binding("ctrl+x", "delete", "delete"),
+        # priority: the focused Input claims ctrl+x for "cut"
+        Binding("ctrl+x", "delete", "delete", priority=True),
         Binding("up", "move(-1)", "up", priority=True),
         Binding("down", "move(1)", "down", priority=True),
         Binding("pageup", "page(-1)", "page up", priority=True),
@@ -195,11 +186,13 @@ class Speak(App):
     #picker-title { color: $accent; text-style: bold; height: 1; }
     #picker-list { height: auto; max-height: 20; border: none; background: $surface; }
 
+    /* width must be explicit: `auto` on a layered container collapses it */
     #help {
-        layer: overlay; width: auto; height: auto;
+        layer: overlay; width: 70; max-width: 95%; height: auto;
         margin: 2 4; padding: 1 2;
         border: round $accent; background: $surface;
     }
+    #help-body { height: auto; }
     #help-title { color: $accent; text-style: bold; }
     """
 
@@ -210,15 +203,18 @@ class Speak(App):
         Binding("tab", "saved", "saved phrases", priority=True),
         Binding("ctrl+v", "voice", "voice", priority=True),
         Binding("ctrl+s", "save_phrase", "save", priority=True),
-        Binding("up", "move(-1)", "up", priority=True),
-        Binding("down", "move(1)", "down", priority=True),
-        Binding("escape", "unpick", "unpick", priority=True),
+        # NOT priority: an app-level priority binding outranks the active
+        # screen's, so an open Picker would never see its own arrows or escape.
+        # The prompt Input claims none of these three, so they still arrive.
+        Binding("up", "move(-1)", "up"),
+        Binding("down", "move(1)", "down"),
+        Binding("escape", "unpick", "unpick"),
     ]
 
-    def __init__(self):
+    def __init__(self, run=None):
         super().__init__()
         self.cfg = core.load()
-        self.sp = core.Speaker(self.cfg)
+        self.sp = core.Speaker(self.cfg, run=run)     # run= lets tests record argv
         self.lines = core.load_transcript()
         self.sel = None
 
@@ -280,6 +276,10 @@ class Speak(App):
         event.input.value = ""
 
         if not line:
+            # ⏎ on an empty prompt says the picked line again. The Input has
+            # focus, so it swallows the key before OptionList ever sees it.
+            if self.sel is not None:
+                self.speak(self.lines[self.sel])
             return
 
         if line.startswith("\\"):
@@ -314,11 +314,6 @@ class Speak(App):
         self.sel = None
         self.repopulate()
         self.speak(line)
-
-    def on_option_list_option_selected(self, event) -> None:
-        """⏎ on the transcript says the picked line again."""
-        if event.option_list.id == "transcript" and self.sel is not None:
-            self.speak(self.lines[self.sel])
 
     # --- picking ------------------------------------------------------------
 
@@ -403,5 +398,9 @@ class Speak(App):
         core.trim_transcript(core.load_transcript())    # cap the file on the way out
 
 
-if __name__ == "__main__":
+def main():
     Speak().run()
+
+
+if __name__ == "__main__":
+    main()
