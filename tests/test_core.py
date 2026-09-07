@@ -117,6 +117,18 @@ def test_voice_label_shortens_only_identifiers(stored, shown):
     assert core.voice_label(stored) == shown
 
 
+def test_voice_list_offers_a_way_back_to_the_default(monkeypatch):
+    """`say`'s no--v default is a System Voice that neither API enumerates, so
+    without this row picking a voice is a one-way door."""
+    monkeypatch.setattr(core.subprocess, "run", lambda *a, **k: type(
+        "R", (), {"stdout": "Albert              en_US    # hi\n"})())
+
+    voices = core.voice_names({**core.DEFAULTS, "backend": "say"})
+
+    assert voices[0] == ("(system default)", None)
+    assert voices[1] == ("Albert  en_US", "Albert")
+
+
 # --- fuzzy matching ---------------------------------------------------------
 
 NAMES = ["Daniel", "Alice", "Albert"]
@@ -264,7 +276,6 @@ def test_command_rejects_an_unknown_backend(cfg):
 
 
 @pytest.mark.parametrize("typed, action", [
-    ("/quit", "quit"),
     ("/help", "help"),
     ("/", "help"),
     ("/clear", "clear"),

@@ -10,7 +10,7 @@ import pytest
 from textual.widgets import Input, Static
 
 from speak import core
-from speak.app import Picker, Speak
+from speak.app import Help, Picker, Speak
 
 
 @pytest.fixture
@@ -305,6 +305,49 @@ async def test_typing_in_a_picker_filters_it(app, monkeypatch):
         await pilot.pause()
 
         assert app.cfg["voice"] == "Daniel"     # the value, not the shown label
+
+
+async def test_f1_opens_the_key_list_without_typing(app):
+    async with app.run_test() as pilot:
+        await pilot.press("f1")
+        await pilot.pause()
+
+        assert isinstance(app.screen, Help)
+
+
+async def test_a_stray_key_does_not_close_the_key_list(app):
+    """It closed on ANY key, so the modifiers of a cmd+shift+4 screenshot
+    dismissed it mid-capture."""
+    async with app.run_test() as pilot:
+        await pilot.press("f1")
+        await pilot.pause()
+
+        await pilot.press("a", "4", "z")
+        await pilot.pause()
+        assert isinstance(app.screen, Help)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, Help)
+
+
+async def test_voice_picker_can_return_to_the_system_default(app, monkeypatch):
+    """The default is a System Voice neither API enumerates, so the list has to
+    offer an explicit way back to it."""
+    monkeypatch.setattr(core, "voice_names", lambda cfg: [
+        ("(system default)", None),
+        ("Daniel  en_GB", "Daniel"),
+    ])
+
+    async with app.run_test() as pilot:
+        app.cfg["voice"] = "Daniel"
+
+        await pilot.press("ctrl+v")
+        await pilot.pause()
+        await pilot.press("enter")          # first row
+        await pilot.pause()
+
+        assert app.cfg["voice"] is None
 
 
 # --- settings ---------------------------------------------------------------

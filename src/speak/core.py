@@ -183,13 +183,23 @@ def parse_av_voices(out):
     return voices
 
 def voice_names(cfg):
-    """[(label, value)]: the label is shown, the value goes to the backend."""
+    """[(label, value)]: the label is shown, the value goes to the backend.
+
+    The first row clears the setting. It has to exist, because `say` with no
+    -v uses the System Voice from Settings > Accessibility > Spoken Content,
+    and if that is a Siri voice then NEITHER `say -v ?` nor
+    AVSpeechSynthesisVoice.speechVoices() lists it — measured: its audio
+    matches none of the 184 names. Without this row, picking any voice is a
+    one-way door away from the default.
+    """
     if cfg["backend"] == "av":
         out = subprocess.run([helper(), "--list"], capture_output=True, text=True)
-        return parse_av_voices(out.stdout)
+        found = parse_av_voices(out.stdout)
+    else:
+        out = subprocess.run(["say", "-v", "?"], capture_output=True, text=True)
+        found = parse_say_voices(out.stdout)
 
-    out = subprocess.run(["say", "-v", "?"], capture_output=True, text=True)
-    return parse_say_voices(out.stdout)
+    return [("(system default)", None)] + found
 
 def voice_label(v):
     """Short form for the status bar: av values are dotted identifiers."""
@@ -267,14 +277,12 @@ def bang(line, n):
 def command(line, cfg):
     """Handle a /line typed at the prompt.
 
-    Returns (action, message): action is "msg", "quit", "help" or "clear",
-    so the UI decides what to do with it rather than reading a sentinel.
+    Returns (action, message): action is "msg", "help" or "clear", so the UI
+    decides what to do with it rather than reading a sentinel. Quitting is a
+    chord only (^Q / ^D) — /quit was the one command that duplicated one.
     """
     word, _, arg = line[1:].partition(" ")
     arg = arg.strip()
-
-    if word in ("quit", "q", "exit"):
-        return "quit", None
 
     if word in ("help", "h", "?", ""):
         return "help", None
@@ -294,7 +302,7 @@ def command(line, cfg):
         save(cfg)
         return "msg", f"{word} = {cfg[word]}"
 
-    return "msg", f"unknown /{word} — /voice /rate /backend /clear /help /quit"
+    return "msg", f"unknown /{word} — /voice /rate /backend /clear /help"
 
 
 def save_target(buf, lines, sel):
@@ -306,7 +314,11 @@ def save_target(buf, lines, sel):
 
     return lines[-1] if lines else ""
 
+# Two spellings, one rule, stated here because it is otherwise guesswork:
+# a chord acts on what is in front of you; a /command takes a typed value.
+# A row with no description is a heading.
 HELP_ROWS = [
+    ("keys", None),
     ("type + ⏎",         "speak it — queued, so carry on typing"),
     ("↑ ↓",              "pick a past line, wrapping at both ends"),
     ("⏎",                "say the picked line again"),
@@ -319,9 +331,14 @@ HELP_ROWS = [
     ("^C",               "stop talking and drop the queue"),
     ("^Q  ^D",           "quit"),
     ("\\",               "speak a literal leading / or !"),
-    ("/voice  /rate",    "show or set, e.g. /rate 200"),
+    ("F1",               "this list"),
+
+    ("commands", None),
+    ("/voice <name>",    "set it by name, when you know it"),
+    ("/rate <wpm>",      "e.g. /rate 200"),
     ("/backend say|av",  "av = Personal Voice, and real emphasis"),
     ("/clear",           "empty the transcript"),
+    ("/help",            "this list"),
 ]
 
 def fuzzy(labels, q):

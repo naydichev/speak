@@ -27,9 +27,12 @@ uv sync
 uv run speak
 ```
 
-## Keys
+## Keys and commands
 
-| | |
+There are two spellings, and one rule: **a chord acts on what's in front of
+you; a `/command` takes a typed value.** `F1` shows this list in the app.
+
+| key | |
 |---|---|
 | type + `⏎` | speak it — queued, so carry on typing |
 | `↑` `↓` | pick a past line, wrapping at both ends |
@@ -43,9 +46,33 @@ uv run speak
 | `^C` | stop talking and drop the queue |
 | `^Q` `^D` | quit |
 | `\` | speak a literal leading `/` or `!` |
-| `/voice` `/rate` | show or set, e.g. `/rate 200` |
+| `F1` | this list |
+
+| command | |
+|---|---|
+| `/voice <name>` | set it by name, when you know it |
+| `/rate <wpm>` | e.g. `/rate 200` |
 | `/backend say\|av` | `av` = Personal Voice, and real emphasis |
 | `/clear` | empty the transcript |
+| `/help` | this list |
+
+Quitting is a chord only — `/quit` was the one command that duplicated one.
+
+## The default voice has no name
+
+With no voice set, `say` uses the **System Voice** from Settings →
+Accessibility → Spoken Content. If that is a Siri voice, neither `say -v ?`
+nor `AVSpeechSynthesisVoice.speechVoices()` lists it: rendering the same
+sentence through all 184 named voices matched none of them. So the status bar
+says `default` rather than a name, and the voice picker carries an explicit
+`(system default)` row — without it, choosing a voice would be a one-way door.
+
+Two related traps found while measuring this:
+
+- `say -v <name-that-does-not-exist>` **exits 0** and silently substitutes a
+  fallback voice. A typo is silent, not an error.
+- Several familiar names (`Alex`, `Zoe`, `Samantha`) render byte-identically
+  here, because only one of them is installed and the others fall back to it.
 
 State lives in `~/.config/speak/config.json` (voice, rate, backend, saved
 phrases) and `~/.local/share/speak/transcript` (the last 500 lines, reloaded

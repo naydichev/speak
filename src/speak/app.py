@@ -52,13 +52,23 @@ def as_text(line, number=None, matched=()):
 
 
 class Help(ModalScreen):
-    """The key list. Any key closes it."""
+    """The key list.
+
+    Closes on a named key only. Closing on *any* key meant the modifiers of
+    a cmd+shift+4 screenshot dismissed it while you were capturing it.
+    """
+
+    BINDINGS = [Binding("escape,enter,space,q,question_mark", "close", "close")]
 
     def compose(self) -> ComposeResult:
-        keyw = max(len(k) for k, _ in core.HELP_ROWS)
+        keyw = max(len(k) for k, d in core.HELP_ROWS if d)
         body = Text()
 
         for k, d in core.HELP_ROWS:
+            if d is None:               # a heading, not a key
+                body.append(f"\n{k}\n", style="bold underline")
+                continue
+
             body.append(f"{k:>{keyw}}", style="bold")
             body.append(f"   {d}\n")
 
@@ -66,8 +76,7 @@ class Help(ModalScreen):
             yield Static("speak · keys", id="help-title")
             yield Static(body, id="help-body")
 
-    def on_key(self, event) -> None:
-        event.stop()
+    def action_close(self) -> None:
         self.dismiss()
 
 
@@ -170,27 +179,27 @@ class Picker(ModalScreen[int]):
 
 class Speak(App):
     CSS = """
-    Screen { layers: base overlay; }
-
     #status { dock: top; height: 1; background: $panel; padding: 0 1; }
     #hints { dock: bottom; height: 1; color: $text-muted; padding: 0 1; }
     #prompt { dock: bottom; }
     #transcript { height: 1fr; border: none; padding: 0 1; background: $surface; }
 
+    Picker, Help { align: center middle; background: $background 60%; }
+
     #picker {
-        layer: overlay;
         width: 74; max-width: 90%; height: auto; max-height: 80%;
-        margin: 2 4; padding: 0 1;
+        padding: 0 1;
         border: round $accent; background: $surface;
     }
     #picker-title { color: $accent; text-style: bold; height: 1; }
     #picker-list { height: auto; max-height: 20; border: none; background: $surface; }
 
-    /* width must be explicit: `auto` on a layered container collapses it */
+    /* width must be explicit: `auto` on this container collapses it */
     #help {
-        layer: overlay; width: 70; max-width: 95%; height: auto;
-        margin: 2 4; padding: 1 2;
+        width: 70; max-width: 95%; height: auto; max-height: 100%;
+        padding: 1 2;
         border: round $accent; background: $surface;
+        overflow-y: auto;               /* scroll rather than clip when short */
     }
     #help-body { height: auto; }
     #help-title { color: $accent; text-style: bold; }
@@ -203,6 +212,7 @@ class Speak(App):
         Binding("tab", "saved", "saved phrases", priority=True),
         Binding("ctrl+v", "voice", "voice", priority=True),
         Binding("ctrl+s", "save_phrase", "save", priority=True),
+        Binding("f1", "help", "keys", priority=True),
         # NOT priority: an app-level priority binding outranks the active
         # screen's, so an open Picker would never see its own arrows or escape.
         # The prompt Input claims none of these three, so they still arrive.
@@ -297,9 +307,7 @@ class Speak(App):
         elif line.startswith("/"):
             action, message = core.command(line, self.cfg)
 
-            if action == "quit":
-                self.exit()
-            elif action == "help":
+            if action == "help":
                 self.push_screen(Help())
             elif action == "clear":
                 self.lines, self.sel = [], None
@@ -389,6 +397,9 @@ class Speak(App):
             self.cfg["saved"].append({"name": core.plain(text)[:40], "text": text})
             core.save(self.cfg)
             self.note(f"saved {len(self.cfg['saved'])}: {core.plain(text)[:40]}")
+
+    def action_help(self) -> None:
+        self.push_screen(Help())
 
     def action_quit(self) -> None:
         self.exit()
