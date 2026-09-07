@@ -123,9 +123,11 @@ Needs `/backend av`. Setup, in order:
 1. Create one in **Settings → Accessibility → Personal Voice** (~15 minutes of
    reading phrases aloud).
 2. Turn on **Allow applications to use your Personal Voice** in that same pane.
-3. Leave the Mac **locked and on power** — macOS generates the voice on-device
-   and it can take hours. "Recording complete" means the recording is done,
-   not the voice.
+3. **Click into the voice's own row and press "Start training…".** This is the
+   step that is easy to miss: training does *not* start on its own, and the
+   outer row says "Recording complete" the whole time it is waiting for you.
+   Once pressed it shows "Preparing", and generation runs on-device — leave the
+   Mac on power; it takes hours, not minutes.
 4. Check whether the asset has landed:
 
    ```sh
@@ -134,6 +136,21 @@ Needs `/backend av`. Setup, in order:
 
 Once a row appears there, `^V` lists it marked `★ personal`. The `av` backend
 works with ordinary system voices regardless, so nothing is gated on this.
+
+### Diagnosing it
+
+The two states look identical from the outside, so check which one you are in:
+
+| symptom | meaning |
+|---|---|
+| `av_speak --list` prints a "denied" note | no app grant yet — step 2 |
+| exits clean, but no `personal` row | not trained, or still preparing — step 3 |
+| `~/Library/Group Containers/group.com.apple.accessibility.voicebanking/` empty | the asset has not been generated on this Mac |
+
+The app grant is not tied to the terminal that asked for it: the request gets
+attributed to whichever app is in the foreground (a bare CLI has no bundle
+identity of its own), but the resulting authorization reads back as
+`authorized` from any shell.
 
 ## Layout
 
