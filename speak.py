@@ -12,8 +12,8 @@
 
 Lines queue through one worker thread, so typing ahead speaks in order.
 Wrap a word in _underscores_ or *stars* to emphasise it. Arrows pick a
-past line to say again (wrapping at both ends); !3 says the 3rd-newest
-straight from the prompt. ⇥ and ^V open fuzzy-filtered lists.
+past line to say again (wrapping at both ends); !3 says the line
+numbered 3 straight from the prompt. ⇥ and ^V open fuzzy-filtered lists.
 
 A backend is just "text -> argv": /usr/bin/say, or the AVSpeechSynthesizer
 helper next door, which additionally reaches Personal Voice and SSML.
@@ -49,6 +49,7 @@ AV_EMPH_RATE = 75           # percent of base
 SAY_EMPH_RATE = 0.5         # fraction of base wpm; pushed harder, being alone
 SAY_BASE_WPM = 175          # pinned only when a `say` line has emphasis in it
 KEEP = 500                  # transcript lines carried across restarts
+PICK_ROWS = 12              # rows in an overlay; fixed, so it never jumps
 
 
 # --- state on disk ----------------------------------------------------------
@@ -322,19 +323,22 @@ BANG = re.compile(r"!(\d*)")
 
 
 def bang(line, n):
-    """'!3' -> index of the 3rd-newest of n lines; '!' alone means the newest.
+    """'!3' -> index of line 3, numbered from the top; '!' alone -> the last line.
 
     None if the line is not a recall at all, -1 if it is but out of range.
-    Counting back from the newest keeps the numbers small and stable in
-    meaning: !1 is always the last thing said, matching what ↑ selects first.
+    A line keeps its number for the whole session; only the trim at exit,
+    once past KEEP lines, renumbers what survives.
     """
     m = BANG.fullmatch(line)
     if not m:
         return None
 
-    back = int(m.group(1) or 1)
+    if not m.group(1):
+        return n - 1 if n else -1                   # bare ! repeats the last line
 
-    return n - back if 1 <= back <= n else -1
+    at = int(m.group(1))
+
+    return at - 1 if 1 <= at <= n else -1
 
 
 def save_target(buf, lines, sel):
@@ -371,8 +375,7 @@ def command(line, cfg, sp):
         return "cleared"                            # handled by caller
 
     if word in ("help", "h", "?", ""):
-        return ("!3 redo 3rd-newest · _emph_ or *emph* · Esc unpick · "
-                "^X delete in a list · \\ escapes a leading / or !")
+        return HELP
 
     return f"unknown /{word} — /voice /rate /backend /clear /help /quit"
 
@@ -390,6 +393,25 @@ def put(scr, y, x, s, attr=0):
 
 
 QUIT = object()             # pick() saw ^Q: the caller should exit, not reopen
+HELP = object()             # /help: the caller should open the modal
+
+HELP_ROWS = [
+    ("type + ⏎",         "speak it — queued, so carry on typing"),
+    ("↑ ↓",              "pick a past line, wrapping at both ends"),
+    ("⏎",                "say the picked line again"),
+    ("Esc",              "unpick"),
+    ("!3",               "say line 3; ! alone repeats the last"),
+    ("_word_  *word*",   "emphasise"),
+    ("⇥",                "saved phrases — type to filter, ^X deletes"),
+    ("^V",               "voice — type to filter"),
+    ("^S",               "save the typed, picked, or last-said line"),
+    ("^C",               "stop talking and drop the queue"),
+    ("^Q  ^D",           "quit"),
+    ("\\",               "speak a literal leading / or !"),
+    ("/voice  /rate",    "show or set, e.g. /rate 200"),
+    ("/backend say|av",  "av = Personal Voice, and real emphasis"),
+    ("/clear",           "empty the transcript"),
+]
 
 
 def key(k):
@@ -427,6 +449,36 @@ def fuzzy(labels, q):
     return [(i, pos) for _, i, pos in hits]
 
 
+def modal(scr, title, rows):
+    """Box of key/description pairs, dismissed by any key.
+
+    ponytail: clips rather than scrolls — 15 rows fit an 80x24 terminal, and
+    a shorter one can be resized. Add scrolling if the list outgrows a screen.
+    """
+    keyw = max(len(k) for k, _ in rows)
+    body = [f"{k:>{keyw}}   {d}" for k, d in rows]
+
+    h, w = scr.getmaxyx()
+    width = min(max(len(title) + 4, max(len(l) for l in body) + 2), w - 4)
+    tall = min(len(body), max(1, h - 4))
+
+    win = curses.newwin(tall + 2, width + 2,
+                        max(0, (h - tall) // 2 - 1), max(0, (w - width) // 2))
+    win.keypad(True)
+    win.erase()
+    win.box()
+    put(win, 0, 2, f" {title} ", curses.A_BOLD)
+
+    for r, line in enumerate(body[:tall]):
+        put(win, r + 1, 1, " " + line)
+
+    win.refresh()
+    win.get_wch()
+
+    scr.touchwin()              # repaint underneath, or the border lingers
+    scr.refresh()
+
+
 def pick(scr, title, labels, delete=None):
     """Modal fuzzy-filtered list. Returns the chosen index, or None if cancelled.
 
@@ -434,76 +486,84 @@ def pick(scr, title, labels, delete=None):
     with the highlighted row's index on ^X, and the row leaves this list too.
     """
     labels = list(labels)
-    q, cur, sel = "", 0, 0
+    q, cur, sel, win = "", 0, 0, None
 
-    while True:
-        if not labels:
-            return None
+    try:
+        while True:
+            if not labels:
+                return None
 
-        hits = fuzzy(labels, q)
-        sel = min(sel, max(0, len(hits) - 1))
+            hits = fuzzy(labels, q)
+            sel = min(sel, max(0, len(hits) - 1))
 
-        h, w = scr.getmaxyx()
-        rows = max(1, min(max(1, len(hits)), h - 8))
-        width = min(max(len(title) + 4, max(len(l) for l in labels) + 4), w - 4)
-        top, left = max(0, (h - rows) // 2 - 2), (w - width) // 2
+            # The box is sized ONCE, from the terminal rather than from the
+            # number of hits: sizing it to the hits made it resize and jump on
+            # every keystroke, and each shrink left its old border behind.
+            if win is None:
+                h, w = scr.getmaxyx()
+                rows = max(1, min(PICK_ROWS, h - 6))
+                width = min(max(len(title) + 4, max(len(l) for l in labels) + 4), w - 4)
+                win = curses.newwin(rows + 4, width + 2,
+                                    max(0, (h - rows - 4) // 2),
+                                    max(0, (w - width) // 2))
+                win.keypad(True)    # a fresh window does NOT inherit it
 
-        # keep the selection inside the window
-        view = min(max(0, sel - rows // 2), max(0, len(hits) - rows))
+            # keep the selection inside the window
+            view = min(max(0, sel - rows // 2), max(0, len(hits) - rows))
 
-        win = curses.newwin(rows + 4, width + 2, top, left)
-        win.keypad(True)            # a fresh window does NOT inherit it
-        win.erase()
-        win.box()
-        put(win, 0, 2, f" {title} ", curses.A_BOLD)
+            win.erase()
+            win.box()
+            put(win, 0, 2, f" {title} ", curses.A_BOLD)
 
-        if not hits:
-            put(win, 1, 1, "  no match".ljust(width), curses.A_DIM)
+            if not hits:
+                put(win, 1, 1, "  no match", curses.A_DIM)
 
-        for r in range(min(rows, len(hits) - view)):
-            i, pos = hits[view + r]
-            attr = curses.A_REVERSE if view + r == sel else 0
-            mark = "▸ " if view + r == sel else "  "
+            for r in range(min(rows, len(hits) - view)):
+                i, pos = hits[view + r]
+                attr = curses.A_REVERSE if view + r == sel else 0
+                mark = "▸ " if view + r == sel else "  "
 
-            put(win, r + 1, 1, (mark + labels[i]).ljust(width), attr)
-            for j in pos:           # underline what the query matched
-                put(win, r + 1, 1 + len(mark) + j, labels[i][j],
-                    attr | curses.A_UNDERLINE | curses.A_BOLD)
+                put(win, r + 1, 1, (mark + labels[i]).ljust(width), attr)
+                for j in pos:       # underline what the query matched
+                    put(win, r + 1, 1 + len(mark) + j, labels[i][j],
+                        attr | curses.A_UNDERLINE | curses.A_BOLD)
 
-        put(win, rows + 2, 1, f" {len(hits)}/{len(labels)} > {q}")
-        win.move(rows + 2, min(len(f" {len(hits)}/{len(labels)} > ") + cur, width))
-        win.refresh()
+            count = f" {len(hits)}/{len(labels)} > "
+            put(win, rows + 2, 1, (count + q).ljust(width))
+            win.move(rows + 2, min(1 + len(count) + cur, width))
+            win.refresh()
 
-        k = win.get_wch()
-        ctrl = key(k)               # get_wch gives '\x11' for ^Q, never 17
+            k = win.get_wch()
+            ctrl = key(k)           # get_wch gives '\x11' for ^Q, never 17
 
-        if k == curses.KEY_UP and hits:
-            sel = (sel - 1) % len(hits)                 # wraps
-        elif k == curses.KEY_DOWN and hits:
-            sel = (sel + 1) % len(hits)
-        elif k == curses.KEY_PPAGE:
-            sel = max(0, sel - rows)
-        elif k == curses.KEY_NPAGE:
-            sel = min(len(hits) - 1, sel + rows)
-        elif ctrl in (10, 13) or k == curses.KEY_ENTER:
-            if hits:
-                return hits[sel][0]
-        elif ctrl == 24 and delete and hits:            # ^X — a letter would filter
-            i = hits[sel][0]
-            delete(i)
-            labels.pop(i)
-            sel = 0
-
-            # the box may shrink, so repaint underneath or its border lingers
-            scr.touchwin()
-            scr.refresh()
-        elif ctrl == 17:                                # ^Q quits the app outright
-            return QUIT
-        elif ctrl in (27, 9, 3):                        # Esc, Tab, ^C just close
-            return None
-        else:
-            q, cur = edit(q, cur, k)
-            sel = 0
+            if k == curses.KEY_RESIZE:
+                win = None          # rebuild at the new terminal size
+            elif k == curses.KEY_UP and hits:
+                sel = (sel - 1) % len(hits)             # wraps
+            elif k == curses.KEY_DOWN and hits:
+                sel = (sel + 1) % len(hits)
+            elif k == curses.KEY_PPAGE:
+                sel = max(0, sel - rows)
+            elif k == curses.KEY_NPAGE:
+                sel = min(len(hits) - 1, sel + rows)
+            elif ctrl in (10, 13) or k == curses.KEY_ENTER:
+                if hits:
+                    return hits[sel][0]
+            elif ctrl == 24 and delete and hits:        # ^X — a letter would filter
+                i = hits[sel][0]
+                delete(i)
+                labels.pop(i)
+                sel = 0
+            elif ctrl == 17:                            # ^Q quits the app outright
+                return QUIT
+            elif ctrl in (27, 9, 3):                    # Esc, Tab, ^C just close
+                return None
+            else:
+                q, cur = edit(q, cur, k)
+                sel = 0
+    finally:
+        scr.touchwin()              # repaint underneath, or the border lingers
+        scr.refresh()
 
 
 def draw(scr, cfg, sp, lines, sel, buf, cur, msg):
@@ -532,7 +592,7 @@ def draw(scr, cfg, sp, lines, sel, buf, cur, msg):
 
         put(scr, r + 1, 0, "▸" if i == sel else " ", attr)
 
-        n = f"{len(lines) - i:>3} "                 # !1 is the newest line
+        n = f"{i + 1:>3} "                          # !3 says line 3
         put(scr, r + 1, 1, n, attr | curses.A_DIM)
 
         x = 1 + len(n)
@@ -668,6 +728,9 @@ def loop(scr, cfg, sp):
                     out = command(line, cfg, sp)
                     if out is False:
                         return
+                    if out is HELP:
+                        modal(scr, "speak · keys", HELP_ROWS)
+                        continue
                     if out == "cleared":
                         lines = []
                         trim_transcript(lines)
@@ -790,17 +853,18 @@ def selftest():
     assert [i for i, _ in fuzzy(names, "")] == [0, 1, 2]           # empty keeps all
     assert [names[i] for i, _ in fuzzy(names, "ae")][0] == "Albert"  # span 3 beats 4
 
-    # !N counts back from the newest, so !1 is always the last thing said
-    three = ["oldest", "middle", "newest"]
-    assert bang("!1", 3) == 2
-    assert bang("!3", 3) == 0
-    assert bang("!", 3) == 2                            # bare ! means the newest
+    # !N is the number shown on the row, counting from the top
+    three = ["first", "second", "third"]
+    assert bang("!1", 3) == 0
+    assert bang("!3", 3) == 2
+    assert bang("!", 3) == 2                            # bare ! repeats the last
     assert bang("!4", 3) == -1                          # out of range, not a crash
     assert bang("!0", 3) == -1
     assert bang("hello", 3) is None                     # not a recall at all
     assert bang("!3 please", 3) is None                 # only a bare recall counts
     assert bang("!1", 0) == -1                          # empty transcript
-    assert three[bang("!2", 3)] == "middle"
+    assert bang("!", 0) == -1
+    assert [three[bang(f"!{i}", 3)] for i in (1, 2, 3)] == three
 
     # emphasis parsing
     assert spans("plain line") == [("plain line", False)]
@@ -848,6 +912,8 @@ def selftest():
         assert command("/voice", cfg, sp) == "voice = Alice"    # no arg reads
         assert command("/quit", cfg, sp) is False
         assert command("/nonsense", cfg, sp).startswith("unknown /nonsense")
+        assert command("/help", cfg, sp) is HELP        # the caller opens the modal
+        assert command("/", cfg, sp) is HELP
     finally:
         globals()["save"] = real_save
 
