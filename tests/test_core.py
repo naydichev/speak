@@ -221,19 +221,38 @@ def test_av_backend_uses_percent_form_prosody():
     cfg = {**core.DEFAULTS, "backend": "av"}
 
     assert core.render("say _this_ loud", cfg) == (
-        '<speak>say <prosody pitch="+30%" rate="75%">this</prosody> loud</speak>')
+        '<speak><prosody rate="100%">say </prosody>'
+        '<prosody pitch="+30%" rate="75%">this</prosody>'
+        '<prosody rate="100%"> loud</prosody></speak>')
+
+
+def test_av_backend_carries_the_rate_in_the_ssml():
+    """AVSpeechUtterance.rate is ignored on an SSML utterance, so /rate has to
+    ride inside the markup — and a percentage is linear in wpm, which the
+    property is not."""
+    cfg = {**core.DEFAULTS, "backend": "av", "rate": 225}
+
+    assert core.render("go _now_", cfg) == (
+        '<speak><prosody rate="129%">go </prosody>'
+        '<prosody pitch="+30%" rate="97%">now</prosody></speak>')
+
+    # and with no emphasis at all, the rate still has to get through
+    assert core.render("go now", cfg) == (
+        '<speak><prosody rate="129%">go now</prosody></speak>')
 
 
 def test_av_backend_escapes_the_text_it_wraps():
     cfg = {**core.DEFAULTS, "backend": "av"}
 
     assert core.render("a < b & _c_", cfg) == (
-        '<speak>a &lt; b &amp; <prosody pitch="+30%" rate="75%">c</prosody></speak>')
+        '<speak><prosody rate="100%">a &lt; b &amp; </prosody>'
+        '<prosody pitch="+30%" rate="75%">c</prosody></speak>')
 
 
 @pytest.mark.parametrize("backend, text", [("say", "no markers"), ("av", "a < b")])
-def test_no_emphasis_means_no_markup_at_all(backend, text):
-    """An unemphasised line must reach the backend exactly as typed."""
+def test_nothing_to_express_means_no_markup_at_all(backend, text):
+    """No emphasis and no rate: the line must reach the backend exactly as
+    typed, with no escaping and no wrapper."""
     assert core.render(text, {**core.DEFAULTS, "backend": backend}) == text
 
 

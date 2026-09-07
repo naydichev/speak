@@ -100,8 +100,9 @@ class Speaker:
         body = render(text, self.cfg)
 
         if self.cfg["backend"] == "av":
-            # "" = default voice, 0 = default rate; helper maps wpm -> rate
-            return [helper(), self.cfg["voice"] or "", str(self.cfg["rate"] or 0), body]
+            # "" = default voice. Speed rides inside the SSML, not as an arg:
+            # see render().
+            return [helper(), self.cfg["voice"] or "", body]
 
         cmd = ["say"]
         if self.cfg["voice"]:
@@ -236,17 +237,32 @@ def plain(text):
     return "".join(c for c, _ in spans(text))
 
 def render(text, cfg):
-    """Text as the chosen backend wants it. No emphasis -> untouched."""
+    """Text as the chosen backend wants it. Nothing to express -> untouched."""
     parts = spans(text)
+    marked = any(em for _, em in parts)
 
     # `say` has no working way to stress one word (see the notes above the
     # constants), so it just loses the markers. The UI says so.
-    if cfg["backend"] != "av" or not any(em for _, em in parts):
+    if cfg["backend"] != "av":
         return plain(text)
 
+    if not marked and not cfg["rate"]:
+        return plain(text)
+
+    # Speed is expressed HERE rather than through AVSpeechUtterance.rate, for
+    # two measured reasons: that property is ignored outright on an SSML
+    # utterance (identical bytes with and without it), and it is non-linear
+    # anyway — mapping 225wpm onto it played 1.82x faster than the default,
+    # where `say -r 225` is 1.28x. An SSML percentage IS linear in wpm, so
+    # 129% matches `say -r 225` to within a percent.
+    base = round(100 * (cfg["rate"] or SAY_BASE_WPM) / SAY_BASE_WPM)
+    emph = round(base * AV_EMPH_RATE / 100)
+
+    # Siblings, never nested: composition of nested rates is not something to
+    # rely on, and a flat list needs no assumption about it.
     body = "".join(
-        f'<prosody pitch="+{AV_EMPH_PITCH}%" rate="{AV_EMPH_RATE}%">{xml(c)}</prosody>'
-        if em else xml(c)
+        f'<prosody pitch="+{AV_EMPH_PITCH}%" rate="{emph}%">{xml(c)}</prosody>' if em
+        else f'<prosody rate="{base}%">{xml(c)}</prosody>'
         for c, em in parts)
 
     return f"<speak>{body}</speak>"

@@ -127,15 +127,25 @@ The relative form is no better: a `-25%` / `+33%` pair came out *slower*
 So the `say` backend speaks the words and drops the markers, and the app says
 so in the status line rather than pretending.
 
-SSML, through `AVSpeechSynthesizer`, does work — with one trap:
+SSML, through `AVSpeechSynthesizer`, does work — with three traps:
 
 | lever | result |
 |---|---|
 | `<emphasis level="strong">` | byte-identical — dropped, like `say`'s |
 | `<prosody rate="0.75">`, `pitch="1.3">` | ignored — bare numbers don't work |
 | `<prosody rate="75%" pitch="+30%">` | works |
+| `AVSpeechUtterance.rate` on an SSML utterance | **ignored outright** |
 
-Pitch is what makes it audible, and percent form is mandatory.
+Pitch is what makes it audible, and percent form is mandatory. The third trap
+is why `/rate` lives inside the markup: setting the `rate` property on an SSML
+utterance produced byte-identical audio to not setting it, so an emphasised
+line came out at default speed however the rate was set.
+
+That property is the wrong scale anyway. Mapping 225 wpm onto it linearly
+played **1.82×** faster than the default, where `say -r 225` is 1.28×. An SSML
+percentage *is* linear in wpm, so `rate="129%"` matches `say -r 225` to within
+a percent. Speed therefore rides in the SSML for both cases, and the helper
+takes no rate argument at all.
 
 Unrelated but worth recording: **175 wpm is `say`'s default.** `say -r 175` is
 byte-identical to no `-r` at all, on every voice tried including a personal

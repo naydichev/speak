@@ -82,7 +82,9 @@ async def test_av_backend_emphasis_reaches_the_backend_as_ssml(app):
         app.sp.q.join()
 
         assert app.spoken == [
-            '<speak>be <prosody pitch="+30%" rate="75%">careful</prosody> now</speak>']
+            '<speak><prosody rate="100%">be </prosody>'
+            '<prosody pitch="+30%" rate="75%">careful</prosody>'
+            '<prosody rate="100%"> now</prosody></speak>']
 
 
 # --- picking ----------------------------------------------------------------

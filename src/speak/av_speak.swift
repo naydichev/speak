@@ -8,17 +8,16 @@
 // backend: once a personal voice is trained and granted, `say -v ?` lists it
 // and `say -v <name>` really speaks it (verified against the fallback).
 //
-//   av_speak --list                        list voices, personal ones marked
-//   av_speak <voice> <wpm> <text|ssml>     speak ("" = default, 0 = default rate)
+//   av_speak --list                    list voices, personal ones marked
+//   av_speak <voice> <text|ssml>       speak ("" = the default voice)
+//
+// There is no rate argument. AVSpeechUtterance.rate is ignored outright on an
+// SSML utterance, and is non-linear besides — 225wpm mapped onto it played
+// 1.82x faster than default where `say -r 225` is 1.28x. speak.py puts speed
+// in the SSML as a percentage, which IS linear in wpm.
 
 import AVFoundation
 import Foundation
-
-// Calibration knob: the words-per-minute that utterance rate 0.5 sounds like.
-// `say -r` is absolute wpm, AVSpeechUtterance.rate is 0...1 around a 0.5
-// default, so the two backends only agree on a number if this matches the
-// voice. Nudge it if /rate 200 sounds different across backends.
-let defaultWPM = 175.0
 
 func isPersonal(_ v: AVSpeechSynthesisVoice) -> Bool {
     v.voiceTraits.contains(.isPersonalVoice)
@@ -92,11 +91,11 @@ if args.first == "--list" {
     exit(0)
 }
 
-guard args.count >= 3 else {
-    die("usage: av_speak <voice> <wpm> <text|ssml>   |   av_speak --list", 2)
+guard args.count >= 2 else {
+    die("usage: av_speak <voice> <text|ssml>   |   av_speak --list", 2)
 }
 
-let text = args[2...].joined(separator: " ")
+let text = args[1...].joined(separator: " ")
 
 // speak.py sends SSML only when the line actually has emphasis in it
 let utterance: AVSpeechUtterance
@@ -112,12 +111,6 @@ if text.hasPrefix("<speak") {
 if !args[0].isEmpty {
     guard let v = find(args[0]) else { die("av_speak: no voice named \(args[0])", 4) }
     utterance.voice = v
-}
-
-if let wpm = Double(args[1]), wpm > 0 {
-    utterance.rate = min(
-        max(Float(0.5 * wpm / defaultWPM), AVSpeechUtteranceMinimumSpeechRate),
-        AVSpeechUtteranceMaximumSpeechRate)
 }
 
 let synth = AVSpeechSynthesizer()
