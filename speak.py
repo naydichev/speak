@@ -49,7 +49,6 @@ AV_EMPH_RATE = 75           # percent of base
 SAY_EMPH_RATE = 0.5         # fraction of base wpm; pushed harder, being alone
 SAY_BASE_WPM = 175          # pinned only when a `say` line has emphasis in it
 KEEP = 500                  # transcript lines carried across restarts
-PICK_ROWS = 12              # rows in an overlay; fixed, so it never jumps
 
 
 # --- state on disk ----------------------------------------------------------
@@ -486,7 +485,7 @@ def pick(scr, title, labels, delete=None):
     with the highlighted row's index on ^X, and the row leaves this list too.
     """
     labels = list(labels)
-    q, cur, sel, win = "", 0, 0, None
+    q, cur, sel = "", 0, 0
 
     try:
         while True:
@@ -496,21 +495,22 @@ def pick(scr, title, labels, delete=None):
             hits = fuzzy(labels, q)
             sel = min(sel, max(0, len(hits) - 1))
 
-            # The box is sized ONCE, from the terminal rather than from the
-            # number of hits: sizing it to the hits made it resize and jump on
-            # every keystroke, and each shrink left its old border behind.
-            if win is None:
-                h, w = scr.getmaxyx()
-                rows = max(1, min(PICK_ROWS, h - 6))
-                width = min(max(len(title) + 4, max(len(l) for l in labels) + 4), w - 4)
-                win = curses.newwin(rows + 4, width + 2,
-                                    max(0, (h - rows - 4) // 2),
-                                    max(0, (w - width) // 2))
-                win.keypad(True)    # a fresh window does NOT inherit it
+            h, w = scr.getmaxyx()
+            rows = max(1, min(max(1, len(hits)), h - 6))
+            width = min(max(len(title) + 4, max(len(l) for l in labels) + 4), w - 4)
 
             # keep the selection inside the window
             view = min(max(0, sel - rows // 2), max(0, len(hits) - rows))
 
+            # The box shrinks as the query narrows, so repaint the screen
+            # underneath FIRST — otherwise the previous, larger border is left
+            # behind around the new one.
+            scr.touchwin()
+            scr.refresh()
+
+            win = curses.newwin(rows + 4, width + 2,
+                                max(0, (h - rows - 4) // 2), max(0, (w - width) // 2))
+            win.keypad(True)        # a fresh window does NOT inherit it
             win.erase()
             win.box()
             put(win, 0, 2, f" {title} ", curses.A_BOLD)
@@ -536,9 +536,7 @@ def pick(scr, title, labels, delete=None):
             k = win.get_wch()
             ctrl = key(k)           # get_wch gives '\x11' for ^Q, never 17
 
-            if k == curses.KEY_RESIZE:
-                win = None          # rebuild at the new terminal size
-            elif k == curses.KEY_UP and hits:
+            if k == curses.KEY_UP and hits:
                 sel = (sel - 1) % len(hits)             # wraps
             elif k == curses.KEY_DOWN and hits:
                 sel = (sel + 1) % len(hits)
