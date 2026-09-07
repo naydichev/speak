@@ -40,7 +40,9 @@ takes a typed value, or is destructive enough to be worth typing.** `^G` or
 | `⏎` | say the picked line again |
 | `Esc` | unpick |
 | `!3` | say line 3; `!` alone repeats the last |
-| `_word_` `*word*` | emphasise |
+| `_word_` `*word*` | emphasise — needs `/backend av` |
+| `^R` | edit the picked line, in place |
+| `^X` | delete the picked line |
 | `⇥` | saved phrases — type to filter, `^X` deletes |
 | `^V` | voice — type to filter |
 | `^S` | save the typed, picked, or last-said line |
@@ -51,9 +53,9 @@ takes a typed value, or is destructive enough to be worth typing.** `^G` or
 
 | command | |
 |---|---|
-| `/voice <name>` | set it by name, when you know it |
-| `/rate <wpm>` | e.g. `/rate 200` |
-| `/backend say\|av` | `av` = stronger emphasis, via SSML pitch |
+| `/voice <name>` | set by name; bare `/voice` restores the default |
+| `/rate <wpm>` | e.g. `/rate 200`; bare `/rate` restores 175 |
+| `/backend say\|av` | `av` = emphasis, via SSML pitch; bare restores `say` |
 | `/clear` | empty the transcript (destructive, so typed) |
 
 Quitting is a chord only — `/quit` was the one command that duplicated one.
@@ -102,32 +104,43 @@ plausible. `av` is worth it only for the stronger emphasis.
 because most of the obvious levers do nothing at all. Comparing rendered
 audio byte-for-byte on macOS 26:
 
+**It only works on `/backend av`,** and that is the whole reason that backend
+exists. Every lever `/usr/bin/say` has, measured:
+
 | lever | result |
 |---|---|
-| `say` `[[emph +]]` | **byte-identical audio** — parsed and discarded |
-| `say` `[[pbas]]`, `[[volm]]` | byte-identical |
-| SSML `<emphasis level="strong">` | byte-identical |
-| SSML `<prosody rate="0.75">`, `pitch="1.3">` | ignored — bare numbers don't work |
-| SSML `<prosody rate="75%" pitch="+30%">` | works |
-| `say` `[[rate N]]` absolute | works |
-| `say` `[[rate -25%]]` relative | compounds and **never restores** |
+| `[[emph +]]`, `[[pbas]]`, `[[volm]]` | **byte-identical audio** — parsed and discarded |
+| `[[slnc N]]` | honoured, but **N is ignored** — always a fixed ~410ms |
+| `[[rate N]]` absolute, whole line | works |
+| `[[rate N]]` around one word | **disrupts prosody instead of stressing** |
+| `[[rate -25%]]` relative | compounds and **never restores** |
 
-That last one is worth knowing: a `-25%` / `+33%` pair came out *slower*
+The single-word case is the interesting failure. `does [[rate 87]]this[[rate
+175]] change anything` comes out **faster** (1.243s) than the plain line
+(1.291s) — the rate changes perturb the phrase timing more than they lengthen
+the word. An earlier build shipped this anyway, on the strength of one phrase
+where the noise happened to land positive. Generalising from one sample.
+
+The relative form is no better: a `-25%` / `+33%` pair came out *slower*
 (4.43s) than applying no restore at all (3.89s).
 
-So emphasis is faked from the two levers that survive:
+So the `say` backend speaks the words and drops the markers, and the app says
+so in the status line rather than pretending.
 
-- `say` gets absolute `[[rate]]` bracketing, which pins the whole line to one
-  rate — measurably audible (1.147s → 1.253s) but weak, since rate is all it has.
-  Pinning is free: **175 wpm is `say`'s default**, and `say -r 175` is
-  byte-identical to no `-r` at all, on every voice tried. Short samples cannot
-  show this — some voices return identical audio for `-r 160`, `175` and `180`,
-  so a 6-word phrase interpolates to a wrong answer.
-- `av` gets scoped `<prosody>` pitch and rate, which is self-restoring and
-  works for every voice. This is the only reason the backend exists.
+SSML, through `AVSpeechSynthesizer`, does work — with one trap:
 
-The four tuning numbers are named constants in `core.py` with the measurement
-in the comment next to them.
+| lever | result |
+|---|---|
+| `<emphasis level="strong">` | byte-identical — dropped, like `say`'s |
+| `<prosody rate="0.75">`, `pitch="1.3">` | ignored — bare numbers don't work |
+| `<prosody rate="75%" pitch="+30%">` | works |
+
+Pitch is what makes it audible, and percent form is mandatory.
+
+Unrelated but worth recording: **175 wpm is `say`'s default.** `say -r 175` is
+byte-identical to no `-r` at all, on every voice tried including a personal
+one. Short samples cannot show this — some voices return identical audio for
+`-r 160`, `175` and `180`, so a 6-word phrase interpolates to a wrong answer.
 
 ## Personal Voice
 

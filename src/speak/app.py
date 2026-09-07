@@ -29,7 +29,11 @@ from textual.widgets.option_list import Option
 
 from speak import core
 
-HINTS = "↑↓ pick · ⏎ speak · !3 redo · ⇥ saved · ^V voice · ^S save · ^C stop · /help"
+# The bar follows what you are doing, which is also how the line keys stay
+# discoverable without a bar too wide to fit.
+HINTS = "⏎ speak · !3 redo · ⇥ saved · ^V voice · ^S save · ^C stop · ^D quit · ^G keys"
+HINTS_PICKED = "⏎ say again · ^R edit · ^X delete · ^S save · Esc unpick · ^G keys"
+HINTS_EDITING = "⏎ replace line {n} · Esc cancel"
 CLOSED = -1                 # a Picker dismissed without choosing
 
 
@@ -90,8 +94,6 @@ class Picker(ModalScreen[int]):
     BINDINGS = [
         Binding("escape", "close", "close"),
         Binding("tab", "close", "close", priority=True),
-        # priority: the focused Input claims ctrl+x for "cut"
-        Binding("ctrl+x", "delete", "delete", priority=True),
         Binding("up", "move(-1)", "up", priority=True),
         Binding("down", "move(1)", "down", priority=True),
         Binding("pageup", "page(-1)", "page up", priority=True),
@@ -212,6 +214,10 @@ class Speak(App):
         Binding("tab", "saved", "saved phrases", priority=True),
         Binding("ctrl+v", "voice", "voice", priority=True),
         Binding("ctrl+s", "save_phrase", "save", priority=True),
+        # ^R rather than ^E: Input binds ctrl+e to end-of-line. ^X costs the
+        # prompt its "cut", which nothing here needs, and matches the pickers.
+        Binding("ctrl+r", "edit_line", "edit the picked line", priority=True),
+        Binding("ctrl+x", "delete_line", "delete the picked line", priority=True),
         # ctrl+h is unusable: textual reports it as `backspace`, same as the
         # backspace key, so binding it would break editing the prompt.
         Binding("ctrl+g", "help", "keys", priority=True),
@@ -230,6 +236,7 @@ class Speak(App):
         self.sp = core.Speaker(self.cfg, run=run)     # run= lets tests record argv
         self.lines = core.load_transcript()
         self.sel = None
+        self.editing = None         # index being rewritten, if any
 
     # --- layout -------------------------------------------------------------
 
@@ -271,15 +278,29 @@ class Speak(App):
             self.note(self.sp.error)
             self.sp.error = None
 
-    def note(self, text) -> None:
-        self.query_one("#hints", Static).update(text or HINTS)
+    def note(self, text=None) -> None:
+        """Show a message, or fall back to the keys for the current context."""
+        if text is None:
+            if self.editing is not None:
+                text = HINTS_EDITING.format(n=self.editing + 1)
+            elif self.sel is not None:
+                text = HINTS_PICKED
+            else:
+                text = HINTS
+
+        self.query_one("#hints", Static).update(text)
 
     # --- speaking -----------------------------------------------------------
 
     def speak(self, text) -> None:
         self.sp.error = None
         self.sp.say(text)
-        self.note(None)
+
+        # markers are dropped rather than spoken, so say why
+        if self.cfg["backend"] != "av" and core.emphasised(text):
+            self.note("emphasis needs /backend av — said it plain")
+        else:
+            self.note()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "prompt":
@@ -287,6 +308,19 @@ class Speak(App):
 
         line = event.value.strip()
         event.input.value = ""
+
+        if self.editing is not None:
+            at, self.editing = self.editing, None
+
+            if line:
+                self.lines[at] = line
+                core.trim_transcript(self.lines)
+                self.sel = at
+                self.repopulate()
+                self.speak(line)
+            else:
+                self.note("edit cancelled")     # submitted empty
+            return
 
         if not line:
             # ⏎ on an empty prompt says the picked line again. The Input has
@@ -339,11 +373,59 @@ class Speak(App):
             self.sel = (self.sel + delta) % len(self.lines)
 
         self.query_one("#transcript", OptionList).highlighted = self.sel
+        self.note()
+
+    def action_edit_line(self) -> None:
+        if self.screen is not self.screen_stack[0]:
+            return                          # an overlay owns the keyboard
+
+        if self.sel is None:
+            self.note("pick a line with ↑↓ first")
+            return
+
+        prompt = self.query_one("#prompt", Input)
+        prompt.value = self.lines[self.sel]
+        prompt.cursor_position = len(prompt.value)
+        prompt.focus()
+
+        self.editing = self.sel
+        self.note()
+
+    def action_delete_line(self) -> None:
+        """^X deletes the highlighted row, wherever you are.
+
+        An app-level priority binding outranks the active screen's, so an open
+        Picker never sees its own ^X — this has to hand it over by hand. The
+        priority is needed at all because the focused Input claims ctrl+x for
+        "cut", which nothing here uses.
+        """
+        if isinstance(self.screen, Picker):
+            self.screen.action_delete()
+            return
+
+        if self.sel is None:
+            self.note("pick a line with ↑↓ first")
+            return
+
+        gone = self.lines.pop(self.sel)
+        core.trim_transcript(self.lines)
+
+        # stay where you were, or step back off the end
+        self.sel = min(self.sel, len(self.lines) - 1) if self.lines else None
+        self.editing = None
+        self.repopulate()
+        self.note(f"deleted: {core.plain(gone)[:40]}")
 
     def action_unpick(self) -> None:
+        if self.editing is not None:
+            self.editing = None
+            self.query_one("#prompt", Input).value = ""
+            self.note("edit cancelled")
+            return
+
         self.sel = None
         self.query_one("#transcript", OptionList).highlighted = None
-        self.note(None)
+        self.note()
 
     def action_stop(self) -> None:
         self.sp.stop()

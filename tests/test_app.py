@@ -63,13 +63,26 @@ async def test_typing_a_line_speaks_it_and_records_it(app):
         assert core.load_transcript() == ["hello there"]
 
 
-async def test_emphasis_reaches_the_backend_as_markup(app):
+async def test_say_backend_drops_emphasis_and_says_so(app):
+    """`say` has no working way to stress a word, so the markers are lost."""
     async with app.run_test() as pilot:
         app.query_one("#prompt", Input).value = "be _careful_ now"
         await pilot.press("enter")
         app.sp.q.join()
 
-        assert app.spoken == ["[[rate 175]]be [[rate 87]]careful[[rate 175]] now"]
+        assert app.spoken == ["be careful now"]
+        assert "/backend av" in hint(app)
+
+
+async def test_av_backend_emphasis_reaches_the_backend_as_ssml(app):
+    async with app.run_test() as pilot:
+        app.cfg["backend"] = "av"
+        app.query_one("#prompt", Input).value = "be _careful_ now"
+        await pilot.press("enter")
+        app.sp.q.join()
+
+        assert app.spoken == [
+            '<speak>be <prosody pitch="+30%" rate="75%">careful</prosody> now</speak>']
 
 
 # --- picking ----------------------------------------------------------------
@@ -363,6 +376,94 @@ async def test_voice_picker_can_return_to_the_system_default(app, monkeypatch):
         await pilot.pause()
 
         assert app.cfg["voice"] is None
+
+
+# --- editing and deleting history ---
+
+async def test_ctrl_r_loads_the_picked_line_for_editing(app):
+    async with app.run_test() as pilot:
+        await seed(pilot, app, "one", "twe", "three")
+
+        await pilot.press("up", "up")           # line 2
+        await pilot.press("ctrl+r")
+
+        assert app.query_one("#prompt", Input).value == "twe"
+        assert app.editing == 1
+        assert "replace line 2" in hint(app)
+
+
+async def test_submitting_an_edit_replaces_the_line_in_place(app):
+    async with app.run_test() as pilot:
+        await seed(pilot, app, "one", "twe", "three")
+
+        await pilot.press("up", "up")
+        await pilot.press("ctrl+r")
+        app.query_one("#prompt", Input).value = "two"
+        await pilot.press("enter")
+        app.sp.q.join()
+
+        assert app.lines == ["one", "two", "three"]     # replaced, not appended
+        assert core.load_transcript() == ["one", "two", "three"]
+        assert app.spoken == ["two"]
+        assert app.editing is None
+
+
+async def test_escape_abandons_an_edit_and_keeps_the_line(app):
+    async with app.run_test() as pilot:
+        await seed(pilot, app, "one", "twe")
+
+        await pilot.press("up")
+        await pilot.press("ctrl+r")
+        app.query_one("#prompt", Input).value = "rewritten"
+        await pilot.press("escape")
+
+        assert app.lines == ["one", "twe"]
+        assert app.editing is None
+        assert app.query_one("#prompt", Input).value == ""
+
+
+async def test_ctrl_x_deletes_one_line_not_the_transcript(app):
+    async with app.run_test() as pilot:
+        await seed(pilot, app, "one", "two", "three")
+
+        await pilot.press("up", "up")           # line 2
+        await pilot.press("ctrl+x")
+
+        assert app.lines == ["one", "three"]
+        assert core.load_transcript() == ["one", "three"]
+
+
+async def test_deleting_the_last_line_steps_the_selection_back(app):
+    async with app.run_test() as pilot:
+        await seed(pilot, app, "one", "two")
+
+        await pilot.press("up")                 # newest, index 1
+        await pilot.press("ctrl+x")
+        assert app.sel == 0
+
+        await pilot.press("ctrl+x")
+        assert app.lines == []
+        assert app.sel is None                  # nothing left to point at
+
+
+async def test_the_line_keys_need_a_picked_line(app):
+    async with app.run_test() as pilot:
+        await seed(pilot, app, "one")
+
+        await pilot.press("ctrl+x")
+        assert app.lines == ["one"]
+        assert "pick a line" in hint(app)
+
+
+async def test_the_hint_bar_follows_the_selection(app):
+    async with app.run_test() as pilot:
+        await seed(pilot, app, "one")
+
+        assert "^D quit" in hint(app)
+        await pilot.press("up")
+        assert "^R edit" in hint(app) and "^X delete" in hint(app)
+        await pilot.press("escape")
+        assert "^D quit" in hint(app)
 
 
 # --- settings ---------------------------------------------------------------

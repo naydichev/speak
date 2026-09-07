@@ -226,6 +226,11 @@ def spans(text):
 
     return out or [(text, False)]
 
+def emphasised(text):
+    """Does the line mark any word for emphasis?"""
+    return any(em for _, em in spans(text))
+
+
 def plain(text):
     """The line without its markers — what gets read aloud, and displayed."""
     return "".join(c for c, _ in spans(text))
@@ -234,24 +239,17 @@ def render(text, cfg):
     """Text as the chosen backend wants it. No emphasis -> untouched."""
     parts = spans(text)
 
-    if not any(em for _, em in parts):
+    # `say` has no working way to stress one word (see the notes above the
+    # constants), so it just loses the markers. The UI says so.
+    if cfg["backend"] != "av" or not any(em for _, em in parts):
         return plain(text)
 
-    if cfg["backend"] == "av":
-        body = "".join(
-            f'<prosody pitch="+{AV_EMPH_PITCH}%" rate="{AV_EMPH_RATE}%">{xml(c)}</prosody>'
-            if em else xml(c)
-            for c, em in parts)
-        return f"<speak>{body}</speak>"
-
-    # `say` only honours an *absolute* [[rate]] — the relative form compounds
-    # and never returns to base — so the whole line gets pinned to one rate.
-    base = cfg["rate"] or SAY_BASE_WPM
     body = "".join(
-        f"[[rate {int(base * SAY_EMPH_RATE)}]]{c}[[rate {base}]]" if em else c
+        f'<prosody pitch="+{AV_EMPH_PITCH}%" rate="{AV_EMPH_RATE}%">{xml(c)}</prosody>'
+        if em else xml(c)
         for c, em in parts)
 
-    return f"[[rate {base}]]{body}"
+    return f"<speak>{body}</speak>"
 
 def xml(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -293,8 +291,19 @@ def command(line, cfg):
         return "clear", "cleared"
 
     if word in ("voice", "rate", "backend"):
+        # A bare /command resets to the default. Nothing is lost by dropping
+        # the old read-back: the status bar shows all three at all times.
         if not arg:
-            return "msg", f"{word} = {cfg[word]}"
+            cfg[word] = DEFAULTS[word]
+            save(cfg)
+
+            if word == "rate":
+                return "msg", f"rate = default ({SAY_BASE_WPM} wpm)"
+            if word == "voice":
+                return "msg", "voice = system default"
+
+            return "msg", f"backend = {cfg[word]} (default)"
+
         if word == "rate" and not arg.isdigit():
             return "msg", "rate takes words per minute, e.g. /rate 220"
         if word == "backend" and arg not in ("say", "av"):
@@ -326,7 +335,9 @@ HELP_ROWS = [
     ("⏎",                "say the picked line again"),
     ("Esc",              "unpick"),
     ("!3",               "say line 3; ! alone repeats the last"),
-    ("_word_  *word*",   "emphasise"),
+    ("_word_  *word*",   "emphasise — needs /backend av"),
+    ("^R",               "edit the picked line"),
+    ("^X",               "delete the picked line"),
     ("⇥",                "saved phrases — type to filter, ^X deletes"),
     ("^V",               "voice — type to filter"),
     ("^S",               "save the typed, picked, or last-said line"),
@@ -336,9 +347,9 @@ HELP_ROWS = [
     ("^G  F1",           "this list (or /help)"),
 
     ("commands", None),
-    ("/voice <name>",    "set it by name, when you know it"),
-    ("/rate <wpm>",      "e.g. /rate 200"),
-    ("/backend say|av",  "av = stronger emphasis, via SSML pitch"),
+    ("/voice <name>",    "set by name; bare /voice restores the default"),
+    ("/rate <wpm>",      "e.g. /rate 200; bare /rate is 175, the default"),
+    ("/backend say|av",  "av emphasises with pitch; bare /backend is say"),
     ("/clear",           "empty the transcript (destructive, so typed)"),
 ]
 

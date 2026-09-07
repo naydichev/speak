@@ -206,13 +206,14 @@ def test_plain_strips_the_markers():
     assert core.plain("say _this_ loud") == "say this loud"
 
 
-def test_say_backend_pins_the_line_to_one_rate():
-    """macOS ignores [[emph]] entirely, and the relative [[rate -25%]] form
-    compounds without ever restoring — so bracket an absolute rate."""
+def test_say_backend_drops_the_markers():
+    """Every lever `say` has was measured: [[emph]]/[[pbas]]/[[volm]] are
+    no-ops, [[slnc]] ignores its argument, and [[rate]] around one word came
+    out FASTER than the plain line. So it speaks the words and nothing else."""
     cfg = {**core.DEFAULTS, "rate": 200}
 
-    assert core.render("say _this_ loud", cfg) == (
-        "[[rate 200]]say [[rate 100]]this[[rate 200]] loud")
+    assert core.render("say _this_ loud", cfg) == "say this loud"
+    assert core.emphasised("say _this_ loud")       # the UI still knows to warn
 
 
 def test_av_backend_uses_percent_form_prosody():
@@ -257,10 +258,30 @@ def cfg(monkeypatch):
     return {**core.DEFAULTS, "voice": "Daniel", "rate": 220}
 
 
-def test_command_sets_and_reads_back(cfg):
+def test_command_sets_by_name(cfg):
     assert core.command("/voice Alice", cfg) == ("msg", "voice = Alice")
     assert cfg["voice"] == "Alice"
-    assert core.command("/voice", cfg) == ("msg", "voice = Alice")   # no arg reads
+
+
+@pytest.mark.parametrize("word, default", [
+    ("voice", None),
+    ("rate", None),
+    ("backend", "say"),
+])
+def test_a_bare_command_restores_the_default(cfg, word, default):
+    """No value resets it. The status bar already shows all three, so there is
+    nothing for a read-back to add."""
+    cfg.update(voice="Alice", rate=300, backend="av")
+
+    action, message = core.command(f"/{word}", cfg)
+
+    assert action == "msg"
+    assert cfg[word] == default
+    assert "default" in message
+
+
+def test_a_bare_rate_names_the_number_it_restores(cfg):
+    assert core.command("/rate", cfg) == ("msg", "rate = default (175 wpm)")
 
 
 def test_command_rejects_a_non_numeric_rate(cfg):
