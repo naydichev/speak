@@ -33,7 +33,7 @@ from speak import core
 # discoverable without a bar too wide to fit.
 HINTS = "⏎ speak · !3 redo · ⇥ saved · ^V voice · ^S save · ^C stop · ^D quit · ^G keys"
 HINTS_PICKED = "⏎ say again · ^R edit · ^X delete · ^S save · Esc unpick · ^G keys"
-HINTS_EDITING = "⏎ replace line {n} · Esc cancel"
+HINTS_EDITING = "⏎ replace line {n}, without saying it · Esc cancel"
 CLOSED = -1                 # a Picker dismissed without choosing
 
 
@@ -317,7 +317,9 @@ class Speak(App):
                 core.trim_transcript(self.lines)
                 self.sel = at
                 self.repopulate()
-                self.speak(line)
+                # deliberately silent: editing is fixing the record, not
+                # saying it. It stays picked, so ⏎ again speaks it.
+                self.note(f"line {at + 1} replaced — ⏎ says it")
             else:
                 self.note("edit cancelled")     # submitted empty
             return

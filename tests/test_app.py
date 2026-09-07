@@ -392,7 +392,7 @@ async def test_ctrl_r_loads_the_picked_line_for_editing(app):
         assert "replace line 2" in hint(app)
 
 
-async def test_submitting_an_edit_replaces_the_line_in_place(app):
+async def test_submitting_an_edit_replaces_the_line_without_saying_it(app):
     async with app.run_test() as pilot:
         await seed(pilot, app, "one", "twe", "three")
 
@@ -404,8 +404,23 @@ async def test_submitting_an_edit_replaces_the_line_in_place(app):
 
         assert app.lines == ["one", "two", "three"]     # replaced, not appended
         assert core.load_transcript() == ["one", "two", "three"]
-        assert app.spoken == ["two"]
+        assert app.spoken == []                         # fixing the record, not saying it
         assert app.editing is None
+
+
+async def test_an_edited_line_stays_picked_so_enter_can_say_it(app):
+    async with app.run_test() as pilot:
+        await seed(pilot, app, "one", "twe")
+
+        await pilot.press("up")
+        await pilot.press("ctrl+r")
+        app.query_one("#prompt", Input).value = "two"
+        await pilot.press("enter")               # replaces, silently
+        assert app.sel == 1
+
+        await pilot.press("enter")               # now say it
+        app.sp.q.join()
+        assert app.spoken == ["two"]
 
 
 async def test_escape_abandons_an_edit_and_keeps_the_line(app):

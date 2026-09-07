@@ -336,7 +336,7 @@ HELP_ROWS = [
     ("Esc",              "unpick"),
     ("!3",               "say line 3; ! alone repeats the last"),
     ("_word_  *word*",   "emphasise — needs /backend av"),
-    ("^R",               "edit the picked line"),
+    ("^R",               "edit the picked line; ⏎ saves it, silently"),
     ("^X",               "delete the picked line"),
     ("⇥",                "saved phrases — type to filter, ^X deletes"),
     ("^V",               "voice — type to filter"),

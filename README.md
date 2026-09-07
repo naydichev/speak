@@ -41,7 +41,7 @@ takes a typed value, or is destructive enough to be worth typing.** `^G` or
 | `Esc` | unpick |
 | `!3` | say line 3; `!` alone repeats the last |
 | `_word_` `*word*` | emphasise — needs `/backend av` |
-| `^R` | edit the picked line, in place |
+| `^R` | edit the picked line in place; `⏎` saves it without saying it |
 | `^X` | delete the picked line |
 | `⇥` | saved phrases — type to filter, `^X` deletes |
 | `^V` | voice — type to filter |
