@@ -28,7 +28,9 @@ AV_EMPH_PITCH = 30          # percent above base
 
 AV_EMPH_RATE = 75           # percent of base
 SAY_EMPH_RATE = 0.5         # fraction of base wpm; pushed harder, being alone
-SAY_BASE_WPM = 175          # pinned only when a `say` line has emphasis in it
+SAY_BASE_WPM = 175          # `say`'s own default, so pinning it changes nothing:
+                            # `say -r 175` is byte-identical to no -r at all,
+                            # on every voice tried including a personal one
 KEEP = 500                  # transcript lines carried across restarts
 
 def load():

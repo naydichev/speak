@@ -119,6 +119,10 @@ So emphasis is faked from the two levers that survive:
 
 - `say` gets absolute `[[rate]]` bracketing, which pins the whole line to one
   rate — measurably audible (1.147s → 1.253s) but weak, since rate is all it has.
+  Pinning is free: **175 wpm is `say`'s default**, and `say -r 175` is
+  byte-identical to no `-r` at all, on every voice tried. Short samples cannot
+  show this — some voices return identical audio for `-r 160`, `175` and `180`,
+  so a 6-word phrase interpolates to a wrong answer.
 - `av` gets scoped `<prosody>` pitch and rate, which is self-restoring and
   works for every voice. This is the only reason the backend exists.
 
