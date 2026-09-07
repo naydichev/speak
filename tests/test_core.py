@@ -22,7 +22,7 @@ class FakeProc:
 
 @pytest.fixture
 def spoken():
-    """A Speaker whose backend records argv instead of talking.
+    """A Speaker whose subprocess call records argv instead of talking.
 
     Recording the argument is the point: a double that ignored it would let
     a wrong voice or a mangled line pass.
@@ -39,7 +39,7 @@ def spoken():
     return make
 
 
-# --- backend argv -----------------------------------------------------------
+# --- the `say` argv -----------------------------------------------------------
 
 def test_argv_carries_voice_and_rate(spoken):
     sp, _ = spoken(voice="Daniel", rate=220)
@@ -94,27 +94,14 @@ def test_say_voice_names_split_on_the_trailing_locale():
     ]
 
 
-def test_av_voices_are_keyed_by_identifier():
-    """Fourteen distinct voices are all named "Eddy", so the name cannot key."""
-    out = ("Eddy\tcom.apple.eloquence.en-US.Eddy\ten-US\n"
-           "Eddy\tcom.apple.eloquence.de-DE.Eddy\tde-DE\n"
-           "Mine\tcom.apple.speech.personal.abc\ten-US\tpersonal\n")
+def test_a_voice_left_by_the_old_backend_is_discarded(paths):
+    """It stored identifiers, which `say` cannot use — and `say` substitutes a
+    default silently rather than failing, which is near-undiagnosable."""
+    core.save({**core.DEFAULTS, "voice": "com.apple.speech.personalvoice.ABC"})
+    assert core.load()["voice"] is None
 
-    assert core.parse_av_voices(out) == [
-        ("Eddy  en-US", "com.apple.eloquence.en-US.Eddy"),
-        ("Eddy  de-DE", "com.apple.eloquence.de-DE.Eddy"),
-        ("Mine  en-US  ★ personal", "com.apple.speech.personal.abc"),
-    ]
-
-
-@pytest.mark.parametrize("stored, shown", [
-    ("com.apple.eloquence.en-US.Eddy", "Eddy"),
-    ("Bad News", "Bad News"),           # say names pass through
-    ("Eddy (U.S.)", "Eddy (U.S.)"),     # dots alone don't make it an identifier
-    (None, None),
-])
-def test_voice_label_shortens_only_identifiers(stored, shown):
-    assert core.voice_label(stored) == shown
+    core.save({**core.DEFAULTS, "voice": "Eddy (U.S.)"})
+    assert core.load()["voice"] == "Eddy (U.S.)"     # a real name with dots survives
 
 
 def test_voice_list_offers_a_way_back_to_the_default(monkeypatch):
@@ -123,7 +110,7 @@ def test_voice_list_offers_a_way_back_to_the_default(monkeypatch):
     monkeypatch.setattr(core.subprocess, "run", lambda *a, **k: type(
         "R", (), {"stdout": "Albert              en_US    # hi\n"})())
 
-    voices = core.voice_names({**core.DEFAULTS, "backend": "say"})
+    voices = core.voice_names()
 
     assert voices[0] == ("(system default)", None)
     assert voices[1] == ("Albert  en_US", "Albert")
@@ -181,79 +168,17 @@ def test_bang_round_trips_every_row():
     assert [rows[core.bang(f"!{i}", 3)] for i in (1, 2, 3)] == rows
 
 
-# --- emphasis ---------------------------------------------------------------
-
-@pytest.mark.parametrize("text, want", [
-    ("plain line", [("plain line", False)]),
-    ("say _this_ loud", [("say ", False), ("this", True), (" loud", False)]),
-    ("*two words* first", [("two words", True), (" first", False)]),
-])
-def test_spans_finds_emphasis(text, want):
-    assert core.spans(text) == want
-
+# --- text reaches `say` untouched -------------------------------------------
 
 @pytest.mark.parametrize("text", [
-    "snake_case_name",      # identifiers must survive
-    "2 * 3 = 6",            # lone stars
-    "cost_2_ ok",           # opener mid-word
-    "a*b* c",
+    "plain line",
+    "say _this_ loud",              # markers are literal now, not markup
+    "a < b & c",                    # nothing is escaped, there is no markup
+    "2 * 3 = 6",
 ])
-def test_spans_leaves_ordinary_punctuation_alone(text):
-    assert core.spans(text) == [(text, False)]
-
-
-def test_plain_strips_the_markers():
-    assert core.plain("say _this_ loud") == "say this loud"
-
-
-def test_say_backend_drops_the_markers():
-    """Every lever `say` has was measured: [[emph]]/[[pbas]]/[[volm]] are
-    no-ops, [[slnc]] ignores its argument, and [[rate]] around one word came
-    out FASTER than the plain line. So it speaks the words and nothing else."""
-    cfg = {**core.DEFAULTS, "rate": 200}
-
-    assert core.render("say _this_ loud", cfg) == "say this loud"
-    assert core.emphasised("say _this_ loud")       # the UI still knows to warn
-
-
-def test_av_backend_uses_percent_form_prosody():
-    """pitch="1.3" and rate="0.75" are silently ignored by macOS; percents work."""
-    cfg = {**core.DEFAULTS, "backend": "av"}
-
-    assert core.render("say _this_ loud", cfg) == (
-        '<speak><prosody rate="100%">say </prosody>'
-        '<prosody pitch="+30%" rate="75%">this</prosody>'
-        '<prosody rate="100%"> loud</prosody></speak>')
-
-
-def test_av_backend_carries_the_rate_in_the_ssml():
-    """AVSpeechUtterance.rate is ignored on an SSML utterance, so /rate has to
-    ride inside the markup — and a percentage is linear in wpm, which the
-    property is not."""
-    cfg = {**core.DEFAULTS, "backend": "av", "rate": 225}
-
-    assert core.render("go _now_", cfg) == (
-        '<speak><prosody rate="129%">go </prosody>'
-        '<prosody pitch="+30%" rate="97%">now</prosody></speak>')
-
-    # and with no emphasis at all, the rate still has to get through
-    assert core.render("go now", cfg) == (
-        '<speak><prosody rate="129%">go now</prosody></speak>')
-
-
-def test_av_backend_escapes_the_text_it_wraps():
-    cfg = {**core.DEFAULTS, "backend": "av"}
-
-    assert core.render("a < b & _c_", cfg) == (
-        '<speak><prosody rate="100%">a &lt; b &amp; </prosody>'
-        '<prosody pitch="+30%" rate="75%">c</prosody></speak>')
-
-
-@pytest.mark.parametrize("backend, text", [("say", "no markers"), ("av", "a < b")])
-def test_nothing_to_express_means_no_markup_at_all(backend, text):
-    """No emphasis and no rate: the line must reach the backend exactly as
-    typed, with no escaping and no wrapper."""
-    assert core.render(text, {**core.DEFAULTS, "backend": backend}) == text
+def test_the_line_is_spoken_exactly_as_typed(spoken, text):
+    sp, _ = spoken()
+    assert sp.argv(text)[-1] == text
 
 
 # --- ^S target --------------------------------------------------------------
@@ -285,12 +210,11 @@ def test_command_sets_by_name(cfg):
 @pytest.mark.parametrize("word, default", [
     ("voice", None),
     ("rate", None),
-    ("backend", "say"),
 ])
 def test_a_bare_command_restores_the_default(cfg, word, default):
     """No value resets it. The status bar already shows all three, so there is
     nothing for a read-back to add."""
-    cfg.update(voice="Alice", rate=300, backend="av")
+    cfg.update(voice="Alice", rate=300)
 
     action, message = core.command(f"/{word}", cfg)
 
@@ -306,13 +230,6 @@ def test_a_bare_rate_names_the_number_it_restores(cfg):
 def test_command_rejects_a_non_numeric_rate(cfg):
     assert "words per minute" in core.command("/rate fast", cfg)[1]
     assert cfg["rate"] == 220               # rejected, so left alone
-
-
-def test_command_rejects_an_unknown_backend(cfg):
-    assert "'say' or 'av'" in core.command("/backend nope", cfg)[1]
-    assert cfg["backend"] == "say"
-    assert core.command("/backend av", cfg)[0] == "msg"
-    assert cfg["backend"] == "av"
 
 
 @pytest.mark.parametrize("typed, action", [

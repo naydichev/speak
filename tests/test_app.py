@@ -15,7 +15,7 @@ from speak.app import Help, Picker, Speak
 
 @pytest.fixture
 def app(tmp_path, monkeypatch):
-    """A Speak whose config, transcript and speech backend are all disposable."""
+    """A Speak whose config, transcript and speech call are all disposable."""
     monkeypatch.setattr(core, "CONFIG", str(tmp_path / "config.json"))
     monkeypatch.setattr(core, "TRANSCRIPT", str(tmp_path / "transcript"))
 
@@ -63,28 +63,14 @@ async def test_typing_a_line_speaks_it_and_records_it(app):
         assert core.load_transcript() == ["hello there"]
 
 
-async def test_say_backend_drops_emphasis_and_says_so(app):
-    """`say` has no working way to stress a word, so the markers are lost."""
+async def test_the_line_is_spoken_exactly_as_typed(app):
+    """No markup of any kind now: emphasis never worked and was cut."""
     async with app.run_test() as pilot:
         app.query_one("#prompt", Input).value = "be _careful_ now"
         await pilot.press("enter")
         app.sp.q.join()
 
-        assert app.spoken == ["be careful now"]
-        assert "/backend av" in hint(app)
-
-
-async def test_av_backend_emphasis_reaches_the_backend_as_ssml(app):
-    async with app.run_test() as pilot:
-        app.cfg["backend"] = "av"
-        app.query_one("#prompt", Input).value = "be _careful_ now"
-        await pilot.press("enter")
-        app.sp.q.join()
-
-        assert app.spoken == [
-            '<speak><prosody rate="100%">be </prosody>'
-            '<prosody pitch="+30%" rate="75%">careful</prosody>'
-            '<prosody rate="100%"> now</prosody></speak>']
+        assert app.spoken == ["be _careful_ now"]
 
 
 # --- picking ----------------------------------------------------------------
@@ -229,13 +215,13 @@ async def test_ctrl_s_saves_what_is_typed_before_the_transcript(app):
         assert [s["text"] for s in app.cfg["saved"]] == ["not sent yet"]
 
 
-async def test_ctrl_s_stores_markers_but_labels_the_plain_text(app):
+async def test_ctrl_s_labels_a_saved_phrase_with_its_own_text(app):
     async with app.run_test() as pilot:
-        await seed(pilot, app, "be _careful_ now")
+        await seed(pilot, app, "be careful now")
 
         await pilot.press("ctrl+s")
 
-        assert app.cfg["saved"] == [{"name": "be careful now", "text": "be _careful_ now"}]
+        assert app.cfg["saved"] == [{"name": "be careful now", "text": "be careful now"}]
 
 
 async def test_picking_a_saved_phrase_speaks_it(app):
@@ -301,7 +287,7 @@ async def test_escape_closes_a_picker_without_choosing(app):
 
 
 async def test_typing_in_a_picker_filters_it(app, monkeypatch):
-    monkeypatch.setattr(core, "voice_names", lambda cfg: [
+    monkeypatch.setattr(core, "voice_names", lambda: [
         ("Albert  en_US", "Albert"),
         ("Alva  sv_SE", "Alva"),
         ("Daniel  en_GB", "Daniel"),
@@ -364,7 +350,7 @@ async def test_a_stray_key_does_not_close_the_key_list(app):
 async def test_voice_picker_can_return_to_the_system_default(app, monkeypatch):
     """The default is a System Voice neither API enumerates, so the list has to
     offer an explicit way back to it."""
-    monkeypatch.setattr(core, "voice_names", lambda cfg: [
+    monkeypatch.setattr(core, "voice_names", lambda: [
         ("(system default)", None),
         ("Daniel  en_GB", "Daniel"),
     ])

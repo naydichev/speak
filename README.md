@@ -5,11 +5,11 @@ front end for `say`, for when typing is faster than speaking.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ speak                          Daniel · 200wpm · say · 2 │
+│ speak                     Daniel · 200wpm · speaking +2 │
 │    1 hello there                                         │
 │    2 how are you doing                                   │
 │    3 i'm doing fine, thanks                              │
-│    4 please be careful with that                         │
+│    4 ^R edits one, ^X deletes one                        │
 │ > what i'm typing now                                    │
 │ ↑↓ pick · ⏎ speak · !3 redo · ⇥ saved · ^V voice · /help │
 └──────────────────────────────────────────────────────────┘
@@ -20,7 +20,7 @@ in order. Nothing waits for the speech to finish.
 
 ## Install
 
-macOS only — it shells out to `say`, and to `AVSpeechSynthesizer` for the rest.
+macOS only — it shells out to `say`.
 
 ```sh
 uv sync
@@ -40,7 +40,6 @@ takes a typed value, or is destructive enough to be worth typing.** `^G` or
 | `⏎` | say the picked line again |
 | `Esc` | unpick |
 | `!3` | say line 3; `!` alone repeats the last |
-| `_word_` `*word*` | emphasise — needs `/backend av` |
 | `^R` | edit the picked line in place; `⏎` saves it without saying it |
 | `^X` | delete the picked line |
 | `⇥` | saved phrases — type to filter, `^X` deletes |
@@ -55,7 +54,6 @@ takes a typed value, or is destructive enough to be worth typing.** `^G` or
 |---|---|
 | `/voice <name>` | set by name; bare `/voice` restores the default |
 | `/rate <wpm>` | e.g. `/rate 200`; bare `/rate` restores 175 |
-| `/backend say\|av` | `av` = emphasis, via SSML pitch; bare restores `say` |
 | `/clear` | empty the transcript (destructive, so typed) |
 
 Quitting is a chord only — `/quit` was the one command that duplicated one.
@@ -83,78 +81,44 @@ State lives in `~/.config/speak/config.json` (voice, rate, backend, saved
 phrases) and `~/.local/share/speak/transcript` (the last 500 lines, reloaded
 at launch).
 
-## Two backends
+## What `say` will and will not do
 
-A backend is just "text → argv".
+Two traps worth knowing, both measured:
 
-- **`say`** — `/usr/bin/say`. No setup, every system voice, and a trained
-  Personal Voice once it is granted.
-- **`av`** — a small Swift helper (`av_speak.swift`, compiled on first use and
-  cached in `~/.cache/speak/`) driving `AVSpeechSynthesizer`. It exists for
-  SSML, which `say` cannot speak and which is the only route to pitch.
+- `say -v <name-that-does-not-exist>` **exits 0** and silently substitutes a
+  fallback voice. A typo is invisible, not an error. (This is why a voice left
+  behind by an older version of this tool is discarded on load — it stored
+  identifiers, which `say` cannot use.)
+- **175 wpm is the default.** `say -r 175` is byte-identical to no `-r` at all,
+  on every voice tried including a trained personal one. Short samples cannot
+  show this: some voices return identical audio for `-r 160`, `175` and `180`,
+  so a 6-word phrase interpolates to a wrong answer.
 
-Personal Voice is **not** exclusive to `av`: once trained and granted it
-appears in `say -v ?` and `say -v "<name>"` really speaks it — verified
-against the fallback voice, since a wrong name would exit 0 and sound
-plausible. `av` is worth it only for the stronger emphasis.
+### Emphasis was tried, and cut
 
-## Emphasis, and what macOS actually honours
-
-`_word_` or `*word*` emphasises. Getting that to be audible took measuring,
-because most of the obvious levers do nothing at all. Comparing rendered
-audio byte-for-byte on macOS 26:
-
-**It only works on `/backend av`,** and that is the whole reason that backend
-exists. Every lever `/usr/bin/say` has, measured:
+An earlier version marked words with `_word_` / `*word*`. It is gone, because
+nothing macOS offers actually stresses one word:
 
 | lever | result |
 |---|---|
-| `[[emph +]]`, `[[pbas]]`, `[[volm]]` | **byte-identical audio** — parsed and discarded |
-| `[[slnc N]]` | honoured, but **N is ignored** — always a fixed ~410ms |
-| `[[rate N]]` absolute, whole line | works |
-| `[[rate N]]` around one word | **disrupts prosody instead of stressing** |
-| `[[rate -25%]]` relative | compounds and **never restores** |
+| `say` `[[emph +]]`, `[[pbas]]`, `[[volm]]` | **byte-identical audio** — parsed and discarded |
+| `say` `[[slnc N]]` | honoured, but **N is ignored** — always a fixed ~410ms |
+| `say` `[[rate N]]` around one word | **faster** than the plain line (1.243s vs 1.291s) |
+| SSML `<emphasis level="strong">` | byte-identical — dropped |
+| SSML `<prosody pitch="+30%">` | audibly different, but reads as a glitch, not stress |
 
-The single-word case is the interesting failure. `does [[rate 87]]this[[rate
-175]] change anything` comes out **faster** (1.243s) than the plain line
-(1.291s) — the rate changes perturb the phrase timing more than they lengthen
-the word. An earlier build shipped this anyway, on the strength of one phrase
-where the noise happened to land positive. Generalising from one sample.
+The last row is the honest reason. Overriding one word's pitch fights the
+contour the synthesiser is already applying to the phrase, so it sounds wrong
+rather than emphatic. Cutting it removed a Swift helper, a second speech
+backend, a compile-on-first-run step, and two incompatible voice-naming
+schemes — for a feature that never worked.
 
-The relative form is no better: a `-25%` / `+33%` pair came out *slower*
-(4.43s) than applying no restore at all (3.89s).
-
-So the `say` backend speaks the words and drops the markers, and the app says
-so in the status line rather than pretending.
-
-SSML, through `AVSpeechSynthesizer`, does work — with three traps:
-
-| lever | result |
-|---|---|
-| `<emphasis level="strong">` | byte-identical — dropped, like `say`'s |
-| `<prosody rate="0.75">`, `pitch="1.3">` | ignored — bare numbers don't work |
-| `<prosody rate="75%" pitch="+30%">` | works |
-| `AVSpeechUtterance.rate` on an SSML utterance | **ignored outright** |
-
-Pitch is what makes it audible, and percent form is mandatory. The third trap
-is why `/rate` lives inside the markup: setting the `rate` property on an SSML
-utterance produced byte-identical audio to not setting it, so an emphasised
-line came out at default speed however the rate was set.
-
-That property is the wrong scale anyway. Mapping 225 wpm onto it linearly
-played **1.82×** faster than the default, where `say -r 225` is 1.28×. An SSML
-percentage *is* linear in wpm, so `rate="129%"` matches `say -r 225` to within
-a percent. Speed therefore rides in the SSML for both cases, and the helper
-takes no rate argument at all.
-
-Unrelated but worth recording: **175 wpm is `say`'s default.** `say -r 175` is
-byte-identical to no `-r` at all, on every voice tried including a personal
-one. Short samples cannot show this — some voices return identical audio for
-`-r 160`, `175` and `180`, so a 6-word phrase interpolates to a wrong answer.
+Leftover markers are harmless: `say` ignores `_` and `*` outright, so an old
+habit costs nothing but the characters on screen.
 
 ## Personal Voice
 
-Needs `/backend av`. Setup, in order:
+Setup, in order:
 
 1. Create one in **Settings → Accessibility → Personal Voice** (~15 minutes of
    reading phrases aloud).
@@ -167,11 +131,11 @@ Needs `/backend av`. Setup, in order:
 4. Check whether the asset has landed:
 
    ```sh
-   ~/.cache/speak/av_speak --list | grep personal
+   say -v '?' | grep -i personal
    ```
 
-Once a row appears there, `^V` lists it marked `★ personal`. The `av` backend
-works with ordinary system voices regardless, so nothing is gated on this.
+Once trained and granted it appears in `say -v ?` like any other voice, so
+`^V` lists it and nothing else is needed.
 
 ### Diagnosing it
 
@@ -179,22 +143,20 @@ The two states look identical from the outside, so check which one you are in:
 
 | symptom | meaning |
 |---|---|
-| `av_speak --list` prints a "denied" note | no app grant yet — step 2 |
-| exits clean, but no `personal` row | not trained, or still preparing — step 3 |
+| the voice never appears in `say -v ?` | not granted, not trained, or still preparing |
 | `~/Library/Group Containers/group.com.apple.accessibility.voicebanking/` empty | the asset has not been generated on this Mac |
 
-The app grant is not tied to the terminal that asked for it: the request gets
-attributed to whichever app is in the foreground (a bare CLI has no bundle
-identity of its own), but the resulting authorization reads back as
-`authorized` from any shell.
+The app grant is attributed to whichever app is in the foreground when it is
+requested (a bare CLI has no bundle identity of its own), but it applies
+everywhere once given.
 
 ## Layout
 
 ```
-src/speak/core.py        backends, emphasis, voice parsing, fuzzy matching — no UI import
-src/speak/app.py         the textual app
-src/speak/av_speak.swift the AVSpeechSynthesizer helper
-tests/test_core.py       headless
+src/speak/core.py    speech, config, voice parsing, fuzzy matching — no UI import
+src/speak/app.py     the textual app
+tests/test_core.py   headless
+tests/test_app.py    driven through textual's pilot
 ```
 
 `core.py` deliberately imports no UI, so the logic is testable without a

@@ -2,18 +2,18 @@
 """Full-screen talker: type a line, press Enter, keep typing while it talks.
 
     ┌──────────────────────────────────────────────────────────┐
-    │ speak                          Daniel · 200wpm · say · 2 │  status
+    │ speak                     Daniel · 200wpm · speaking +2 │  status
     │    1 hello there                                         │  transcript,
     │    2 how are you doing                                   │  newest last
     │    3 i'm doing fine, thanks                              │  ↑↓ picks one
-    │    4 please be careful with that                         │  bold = _emph_
+    │    4 ^R edits one, ^X deletes one                        │
     │ > what i'm typing now                                    │  input
     │ ↑↓ pick · ⏎ speak · !3 redo · ⇥ saved · ^V voice · /help │  keys
     └──────────────────────────────────────────────────────────┘
 
 Lines queue through one worker thread, so typing ahead speaks in order.
-Wrap a word in _underscores_ or *stars* to emphasise it. Arrows pick a past
-line to say again (wrapping at both ends); !3 says the line numbered 3.
+Arrows pick a past line to say again (wrapping at both ends); !3 says the
+line numbered 3.
 
 All the logic lives in core.py, which imports no UI at all, so it is tested
 headless: `uv run pytest`.
@@ -38,19 +38,17 @@ CLOSED = -1                 # a Picker dismissed without choosing
 
 
 def as_text(line, number=None, matched=()):
-    """A transcript or picker row: dim number, bold emphasis, underlined matches."""
+    """A transcript or picker row: dim line number, underlined filter matches."""
     out = Text()
 
     if number is not None:
         out.append(f"{number:>4} ", style="dim")
 
-    if matched:                 # picker labels carry no emphasis markers
+    if matched:                 # a picker row: underline what the filter hit
         for i, ch in enumerate(line):
             out.append(ch, style="bold underline" if i in matched else "")
-        return out
-
-    for chunk, em in core.spans(line):
-        out.append(chunk, style="bold" if em else "")
+    else:
+        out.append(line)
 
     return out
 
@@ -265,9 +263,8 @@ class Speak(App):
     def show_status(self) -> None:
         pending = self.sp.pending()
         bits = [
-            core.voice_label(self.cfg["voice"]) or "default",
+            self.cfg["voice"] or "default",
             f"{self.cfg['rate']}wpm" if self.cfg["rate"] else None,
-            self.cfg["backend"],
             f"speaking +{pending - 1}" if pending > 1
             else ("speaking" if pending else None),
         ]
@@ -295,12 +292,7 @@ class Speak(App):
     def speak(self, text) -> None:
         self.sp.error = None
         self.sp.say(text)
-
-        # markers are dropped rather than spoken, so say why
-        if self.cfg["backend"] != "av" and core.emphasised(text):
-            self.note("emphasis needs /backend av — said it plain")
-        else:
-            self.note()
+        self.note()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "prompt":
@@ -416,7 +408,7 @@ class Speak(App):
         self.sel = min(self.sel, len(self.lines) - 1) if self.lines else None
         self.editing = None
         self.repopulate()
-        self.note(f"deleted: {core.plain(gone)[:40]}")
+        self.note(f"deleted: {gone[:40]}")
 
     def action_unpick(self) -> None:
         if self.editing is not None:
@@ -455,10 +447,10 @@ class Speak(App):
         )
 
     def action_voice(self) -> None:
-        voices = core.voice_names(self.cfg)
+        voices = core.voice_names()
 
         if not voices:
-            self.note("no voices available for this backend")
+            self.note("no voices available")
             return
 
         def chosen(i):
@@ -468,7 +460,7 @@ class Speak(App):
                 self.note(f"voice = {voices[i][0]}")
 
         self.push_screen(
-            Picker(f"voice · {self.cfg['backend']}", [label for label, _ in voices]),
+            Picker("voice", [label for label, _ in voices]),
             chosen,
         )
 
@@ -481,9 +473,9 @@ class Speak(App):
         elif any(s["text"] == text for s in self.cfg["saved"]):
             self.note("already saved")
         else:
-            self.cfg["saved"].append({"name": core.plain(text)[:40], "text": text})
+            self.cfg["saved"].append({"name": text[:40], "text": text})
             core.save(self.cfg)
-            self.note(f"saved {len(self.cfg['saved'])}: {core.plain(text)[:40]}")
+            self.note(f"saved {len(self.cfg['saved'])}: {text[:40]}")
 
     def action_help(self) -> None:
         self.push_screen(Help())
