@@ -8,10 +8,12 @@
     │ please be careful with that                               │  bold = _emph_
     ├───────────────────────────────────────────────────────────┤
     │ > what i'm typing now_                                    │  input
-    └ ↑↓ pick · ⏎ speak · ⇥ saved · ^S save · ^C stop ────────┘
+    └ ↑↓ pick · ⏎ speak · !3 redo · ⇥ saved · ^S save · ^C stop ┘
 
 Lines queue through one worker thread, so typing ahead speaks in order.
-Wrap a word in _underscores_ or *stars* to emphasise it.
+Wrap a word in _underscores_ or *stars* to emphasise it. Arrows pick a
+past line to say again (wrapping at both ends); !3 says the 3rd-newest
+straight from the prompt. ⇥ and ^V open fuzzy-filtered lists.
 
 A backend is just "text -> argv": /usr/bin/say, or the AVSpeechSynthesizer
 helper next door, which additionally reaches Personal Voice and SSML.
@@ -172,14 +174,54 @@ class Speaker:
                 self.proc.kill()
 
 
+def parse_say_voices(out):
+    """[(label, name)] from `say -v ?`.
+
+    "Eddy (German (Germany)) de_DE  # sample" — only ONE space separates that
+    name from its locale, so splitting on runs of spaces glues the locale onto
+    the name. `say` then silently falls back to a default voice instead of
+    erroring, which looks exactly like "picking a voice does nothing".
+    """
+    voices = []
+
+    for line in out.splitlines():
+        head = line.split("#")[0].rsplit(None, 1)     # drop the trailing locale
+        if len(head) == 2:
+            name = head[0].strip()
+            voices.append((f"{name}  {head[1]}", name))
+
+    return voices
+
+
+def parse_av_voices(out):
+    """[(label, identifier)] from `av_speak --list`.
+
+    Keyed by identifier, not name: fourteen different voices are called "Eddy".
+    """
+    voices = []
+
+    for line in out.splitlines():
+        row = line.split("\t")
+        if len(row) >= 3:
+            star = "  ★ personal" if len(row) > 3 else ""
+            voices.append((f"{row[0]}  {row[2]}{star}", row[1]))
+
+    return voices
+
+
 def voice_names(cfg):
-    """Voice names for the picker: what the chosen backend can actually use."""
+    """[(label, value)]: the label is shown, the value goes to the backend."""
     if cfg["backend"] == "av":
         out = subprocess.run([helper(), "--list"], capture_output=True, text=True)
-        return [l.split("\t")[0] for l in out.stdout.splitlines() if l.strip()]
+        return parse_av_voices(out.stdout)
 
     out = subprocess.run(["say", "-v", "?"], capture_output=True, text=True)
-    return [l.split("  ")[0].strip() for l in out.stdout.splitlines() if l.strip()]
+    return parse_say_voices(out.stdout)
+
+
+def voice_label(v):
+    """Short form for the status bar: av values are dotted identifiers."""
+    return v.rsplit(".", 1)[-1] if v and v.startswith("com.apple.") else v
 
 
 # --- emphasis ---------------------------------------------------------------
@@ -276,6 +318,25 @@ def edit(buf, cur, k):
 
 # --- settings commands ------------------------------------------------------
 
+BANG = re.compile(r"!(\d*)")
+
+
+def bang(line, n):
+    """'!3' -> index of the 3rd-newest of n lines; '!' alone means the newest.
+
+    None if the line is not a recall at all, -1 if it is but out of range.
+    Counting back from the newest keeps the numbers small and stable in
+    meaning: !1 is always the last thing said, matching what ↑ selects first.
+    """
+    m = BANG.fullmatch(line)
+    if not m:
+        return None
+
+    back = int(m.group(1) or 1)
+
+    return n - back if 1 <= back <= n else -1
+
+
 def save_target(buf, lines, sel):
     """What ^S saves: what you're typing, else the picked line, else the last said."""
     if buf.strip():
@@ -310,7 +371,8 @@ def command(line, cfg, sp):
         return "cleared"                            # handled by caller
 
     if word in ("help", "h", "?", ""):
-        return "↑↓ pick · ⏎ speak · _emphasis_ · ⇥ saved · ^V voice · ^S save · ^C stop · ^Q quit"
+        return ("!3 redo 3rd-newest · _emph_ or *emph* · Esc unpick · "
+                "^X delete in a list · \\ escapes a leading / or !")
 
     return f"unknown /{word} — /voice /rate /backend /clear /help /quit"
 
@@ -327,63 +389,121 @@ def put(scr, y, x, s, attr=0):
             pass
 
 
-def pick(scr, title, labels, delete=None):
-    """Modal scrolling list. Returns the chosen index, or None if cancelled.
+QUIT = object()             # pick() saw ^Q: the caller should exit, not reopen
 
-    `delete` is called with an index when 'd' is pressed; the row is then
-    dropped from this list too.
+
+def key(k):
+    """get_wch() gives str for characters and int for special keys; control
+    characters arrive as str too, so fold those to their ordinal."""
+    return ord(k) if isinstance(k, str) and len(k) == 1 and ord(k) < 32 else k
+
+
+def fuzzy(labels, q):
+    """[(index, matched positions)] for labels matching q as a subsequence.
+
+    Ranked tightest-span first, then earliest match, then original order, so
+    "al" puts Albert (a-l adjacent) above Alice (a..l). Empty q keeps all.
+    """
+    if not q:
+        return [(i, ()) for i in range(len(labels))]
+
+    q = q.lower()
+    hits = []
+
+    for i, label in enumerate(labels):
+        hay, pos, at = label.lower(), [], 0
+
+        for ch in q:
+            at = hay.find(ch, at)
+            if at < 0:
+                break
+            pos.append(at)
+            at += 1
+        else:
+            hits.append(((pos[-1] - pos[0], pos[0], i), i, tuple(pos)))
+
+    hits.sort()
+
+    return [(i, pos) for _, i, pos in hits]
+
+
+def pick(scr, title, labels, delete=None):
+    """Modal fuzzy-filtered list. Returns the chosen index, or None if cancelled.
+
+    Typing filters the list; matched letters are underlined. `delete` is called
+    with the highlighted row's index on ^X, and the row leaves this list too.
     """
     labels = list(labels)
-    sel = 0
+    q, cur, sel = "", 0, 0
 
     while True:
         if not labels:
             return None
 
+        hits = fuzzy(labels, q)
+        sel = min(sel, max(0, len(hits) - 1))
+
         h, w = scr.getmaxyx()
-        rows = max(1, min(len(labels), h - 6))
-        width = min(max(len(title) + 4, *(len(l) + 6 for l in labels)), w - 4)
-        top, left = (h - rows) // 2 - 1, (w - width) // 2
+        rows = max(1, min(max(1, len(hits)), h - 8))
+        width = min(max(len(title) + 4, max(len(l) for l in labels) + 4), w - 4)
+        top, left = max(0, (h - rows) // 2 - 2), (w - width) // 2
 
         # keep the selection inside the window
-        view = min(max(0, sel - rows // 2), max(0, len(labels) - rows))
+        view = min(max(0, sel - rows // 2), max(0, len(hits) - rows))
 
-        win = curses.newwin(rows + 2, width + 2, top, left)
+        win = curses.newwin(rows + 4, width + 2, top, left)
         win.keypad(True)            # a fresh window does NOT inherit it
         win.erase()
         win.box()
         put(win, 0, 2, f" {title} ", curses.A_BOLD)
 
-        for r in range(rows):
-            i = view + r
-            mark = "▸" if i == sel else " "
-            put(win, r + 1, 1, f"{mark}{i + 1:>3}. {labels[i]}".ljust(width),
-                curses.A_REVERSE if i == sel else 0)
+        if not hits:
+            put(win, 1, 1, "  no match".ljust(width), curses.A_DIM)
 
+        for r in range(min(rows, len(hits) - view)):
+            i, pos = hits[view + r]
+            attr = curses.A_REVERSE if view + r == sel else 0
+            mark = "▸ " if view + r == sel else "  "
+
+            put(win, r + 1, 1, (mark + labels[i]).ljust(width), attr)
+            for j in pos:           # underline what the query matched
+                put(win, r + 1, 1 + len(mark) + j, labels[i][j],
+                    attr | curses.A_UNDERLINE | curses.A_BOLD)
+
+        put(win, rows + 2, 1, f" {len(hits)}/{len(labels)} > {q}")
+        win.move(rows + 2, min(len(f" {len(hits)}/{len(labels)} > ") + cur, width))
         win.refresh()
 
         k = win.get_wch()
+        ctrl = key(k)               # get_wch gives '\x11' for ^Q, never 17
 
-        if k == curses.KEY_UP:
-            sel = max(0, sel - 1)
-        elif k == curses.KEY_DOWN:
-            sel = min(len(labels) - 1, sel + 1)
+        if k == curses.KEY_UP and hits:
+            sel = (sel - 1) % len(hits)                 # wraps
+        elif k == curses.KEY_DOWN and hits:
+            sel = (sel + 1) % len(hits)
         elif k == curses.KEY_PPAGE:
             sel = max(0, sel - rows)
         elif k == curses.KEY_NPAGE:
-            sel = min(len(labels) - 1, sel + rows)
-        elif k in ("\n", "\r", curses.KEY_ENTER):
-            return sel
-        elif k in ("d", "D") and delete:
-            delete(sel)
-            labels.pop(sel)
-            sel = min(sel, max(0, len(labels) - 1))
+            sel = min(len(hits) - 1, sel + rows)
+        elif ctrl in (10, 13) or k == curses.KEY_ENTER:
+            if hits:
+                return hits[sel][0]
+        elif ctrl == 24 and delete and hits:            # ^X — a letter would filter
+            i = hits[sel][0]
+            delete(i)
+            labels.pop(i)
+            sel = 0
 
-            # the box shrinks, so repaint underneath or its old border lingers
+            # the box may shrink, so repaint underneath or its border lingers
             scr.touchwin()
             scr.refresh()
-        elif k in ("\x1b", "\t", "q", 3, 17):        # Esc, Tab, q, ^C, ^Q
+        elif ctrl == 17:                                # ^Q quits the app outright
+            return QUIT
+        elif ctrl in (27, 9, 3):                        # Esc, Tab, ^C just close
             return None
+        else:
+            q, cur = edit(q, cur, k)
+            sel = 0
 
 
 def draw(scr, cfg, sp, lines, sel, buf, cur, msg):
@@ -393,7 +513,7 @@ def draw(scr, cfg, sp, lines, sel, buf, cur, msg):
     # status bar
     n = sp.pending()
     right = " · ".join(filter(None, [
-        cfg["voice"] or "default",
+        voice_label(cfg["voice"]) or "default",
         f"{cfg['rate']}wpm" if cfg["rate"] else None,
         cfg["backend"],
         f"speaking +{n - 1}" if n > 1 else ("speaking" if n else None),
@@ -411,7 +531,11 @@ def draw(scr, cfg, sp, lines, sel, buf, cur, msg):
         attr = curses.A_REVERSE if i == sel else 0
 
         put(scr, r + 1, 0, "▸" if i == sel else " ", attr)
-        x = 1
+
+        n = f"{len(lines) - i:>3} "                 # !1 is the newest line
+        put(scr, r + 1, 1, n, attr | curses.A_DIM)
+
+        x = 1 + len(n)
         for chunk, em in spans(lines[i]):           # markers off, bold on
             put(scr, r + 1, x, chunk, attr | (curses.A_BOLD if em else 0))
             x += len(chunk)
@@ -419,7 +543,8 @@ def draw(scr, cfg, sp, lines, sel, buf, cur, msg):
     # input line
     put(scr, h - 2, 0, "> " + buf)
 
-    hint = msg or "↑↓ pick · ⏎ speak · _emphasis_ · ⇥ saved · ^V voice · ^S save · ^C stop · ^Q quit"
+    hint = msg or ("↑↓ pick · ⏎ speak · !3 redo · ⇥ saved · ^V voice · "
+               "^S save · ^C stop · ^Q quit · /help")
     put(scr, h - 1, 0, hint.ljust(w - 1), curses.A_DIM)
 
     scr.move(h - 2, min(2 + cur, w - 1))
@@ -457,7 +582,7 @@ def loop(scr, cfg, sp):
         except curses.error:        # timeout tick: just redraw
             continue
 
-        ctrl = ord(k) if isinstance(k, str) and len(k) == 1 and ord(k) < 32 else k
+        ctrl = key(k)
 
         if ctrl in (17, 4):                                     # ^Q / ^D quit
             return
@@ -466,11 +591,15 @@ def loop(scr, cfg, sp):
             msg = "stopped"
             continue
 
-        if k == curses.KEY_UP:
-            sel = len(lines) - 1 if sel is None else max(0, sel - 1)
+        if k in (curses.KEY_UP, curses.KEY_DOWN) and lines:
+            if sel is None:
+                sel = len(lines) - 1 if k == curses.KEY_UP else 0
+            else:
+                sel = (sel + (-1 if k == curses.KEY_UP else 1)) % len(lines)
             continue
-        if k == curses.KEY_DOWN:
-            sel = None if sel is None or sel >= len(lines) - 1 else sel + 1
+
+        if ctrl == 27:                                          # Esc drops the pick
+            sel, msg = None, None
             continue
 
         if ctrl == 9:                                           # ⇥ saved phrases
@@ -483,22 +612,28 @@ def loop(scr, cfg, sp):
                 cfg["saved"].pop(i)
                 save(cfg)
 
-            i = pick(scr, "saved  (⏎ speak · d delete)", labels, delete)
+            i = pick(scr, "saved  (⏎ speak · ^X delete · type to filter)",
+                     labels, delete)
+            if i is QUIT:
+                return
             if i is not None:
                 speak(cfg["saved"][i]["text"])
             continue
 
         if ctrl == 22:                                          # ^V voice picker
-            names = voice_names(cfg)
-            if not names:
+            voices = voice_names(cfg)
+            if not voices:
                 msg = "no voices available for this backend"
                 continue
 
-            i = pick(scr, f"voice  ({cfg['backend']})", names)
+            i = pick(scr, f"voice · {cfg['backend']}  (type to filter)",
+                     [label for label, _ in voices])
+            if i is QUIT:
+                return
             if i is not None:
-                cfg["voice"] = names[i]
+                cfg["voice"] = voices[i][1]
                 save(cfg)
-                msg = f"voice = {names[i]}"
+                msg = f"voice = {voices[i][0]}"
             continue
 
         if ctrl == 19:                                          # ^S save a phrase
@@ -520,8 +655,15 @@ def loop(scr, cfg, sp):
                 line = buf.strip()
                 buf, cur = "", 0
 
-                if line.startswith("//"):
-                    line = line[1:]                 # //foo speaks "/foo"
+                if line.startswith("\\"):
+                    line = line[1:]                 # \\foo speaks a literal /foo or !3
+                elif (i := bang(line, len(lines))) is not None:
+                    if i < 0:
+                        msg = f"no line {line[1:] or 1}"
+                    else:
+                        sel = i                     # so ↑↓ and ^S carry on from here
+                        speak(lines[i])
+                    continue
                 elif line.startswith("/"):
                     out = command(line, cfg, sp)
                     if out is False:
@@ -611,6 +753,54 @@ def selftest():
     assert edit("abc", 0, 5) == ("abc", 3)                      # ^E
     assert edit("cafe", 4, "é") == ("cafeé", 5)                 # non-ascii insert
     assert edit("abc", 3, curses.KEY_UP) == ("abc", 3)          # ignored, not eaten
+
+    # voice list parsing: `say -v ?` uses ONE space before the locale, so a
+    # naive split on runs of spaces glues it onto the name and `say` then
+    # silently substitutes a default voice
+    say_out = ("Albert              en_US    # Hello! My name is Albert.\n"
+               "Eddy (German (Germany)) de_DE    # Hallo! Ich heiße Eddy.\n"
+               "Bad News            en_US    # Hello! My name is Bad News.\n")
+    assert parse_say_voices(say_out) == [
+        ("Albert  en_US", "Albert"),
+        ("Eddy (German (Germany))  de_DE", "Eddy (German (Germany))"),
+        ("Bad News  en_US", "Bad News"),
+    ], parse_say_voices(say_out)
+
+    # av keys on identifier, since fourteen distinct voices are named "Eddy"
+    av_out = ("Eddy\tcom.apple.eloquence.en-US.Eddy\ten-US\n"
+              "Eddy\tcom.apple.eloquence.de-DE.Eddy\tde-DE\n"
+              "Mine\tcom.apple.speech.personal.abc\ten-US\tpersonal\n")
+    assert parse_av_voices(av_out) == [
+        ("Eddy  en-US", "com.apple.eloquence.en-US.Eddy"),
+        ("Eddy  de-DE", "com.apple.eloquence.de-DE.Eddy"),
+        ("Mine  en-US  ★ personal", "com.apple.speech.personal.abc"),
+    ], parse_av_voices(av_out)
+
+    assert voice_label("com.apple.eloquence.en-US.Eddy") == "Eddy"
+    assert voice_label("Bad News") == "Bad News"        # say names pass through
+    assert voice_label("Eddy (U.S.)") == "Eddy (U.S.)"  # dots alone aren't an id
+    assert voice_label(None) is None
+
+    # fuzzy filtering: tightest span first, so a-l adjacent beats a...l apart
+    names = ["Daniel", "Alice", "Albert"]
+    assert [names[i] for i, _ in fuzzy(names, "al")] == ["Alice", "Albert", "Daniel"]
+    assert fuzzy(names, "AL") == fuzzy(names, "al")                # case-insensitive
+    assert fuzzy(names, "dan") == [(0, (0, 1, 2))]                 # positions, to underline
+    assert fuzzy(names, "zz") == []
+    assert [i for i, _ in fuzzy(names, "")] == [0, 1, 2]           # empty keeps all
+    assert [names[i] for i, _ in fuzzy(names, "ae")][0] == "Albert"  # span 3 beats 4
+
+    # !N counts back from the newest, so !1 is always the last thing said
+    three = ["oldest", "middle", "newest"]
+    assert bang("!1", 3) == 2
+    assert bang("!3", 3) == 0
+    assert bang("!", 3) == 2                            # bare ! means the newest
+    assert bang("!4", 3) == -1                          # out of range, not a crash
+    assert bang("!0", 3) == -1
+    assert bang("hello", 3) is None                     # not a recall at all
+    assert bang("!3 please", 3) is None                 # only a bare recall counts
+    assert bang("!1", 0) == -1                          # empty transcript
+    assert three[bang("!2", 3)] == "middle"
 
     # emphasis parsing
     assert spans("plain line") == [("plain line", False)]

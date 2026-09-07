@@ -35,7 +35,10 @@ func authorize() -> AVSpeechSynthesizer.PersonalVoiceAuthorizationStatus {
         status = $0
         sem.signal()
     }
-    sem.wait()
+
+    // Bounded: the prompt is a system dialog, and an unanswered one would
+    // otherwise hang --list forever, freezing the caller's whole UI.
+    _ = sem.wait(timeout: .now() + 20)
 
     return status
 }
@@ -74,7 +77,7 @@ if args.first == "--list" {
     let status = authorize()
 
     for v in AVSpeechSynthesisVoice.speechVoices() {
-        print("\(v.name)\t\(v.identifier)\(isPersonal(v) ? "\tpersonal" : "")")
+        print("\(v.name)\t\(v.identifier)\t\(v.language)\(isPersonal(v) ? "\tpersonal" : "")")
     }
 
     if status != .authorized {
