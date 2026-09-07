@@ -29,8 +29,9 @@ uv run speak
 
 ## Keys and commands
 
-There are two spellings, and one rule: **a chord acts on what's in front of
-you; a `/command` takes a typed value.** `F1` shows this list in the app.
+There are two spellings, and one rule: **a chord is immediate; a `/command`
+takes a typed value, or is destructive enough to be worth typing.** `^G` or
+`F1` shows this list in the app.
 
 | key | |
 |---|---|
@@ -46,17 +47,19 @@ you; a `/command` takes a typed value.** `F1` shows this list in the app.
 | `^C` | stop talking and drop the queue |
 | `^Q` `^D` | quit |
 | `\` | speak a literal leading `/` or `!` |
-| `F1` | this list |
+| `^G` `F1` | this list (`/help` works too) |
 
 | command | |
 |---|---|
 | `/voice <name>` | set it by name, when you know it |
 | `/rate <wpm>` | e.g. `/rate 200` |
-| `/backend say\|av` | `av` = Personal Voice, and real emphasis |
-| `/clear` | empty the transcript |
-| `/help` | this list |
+| `/backend say\|av` | `av` = stronger emphasis, via SSML pitch |
+| `/clear` | empty the transcript (destructive, so typed) |
 
 Quitting is a chord only — `/quit` was the one command that duplicated one.
+Help is a chord for the same reason: it takes no value. `^H` would have been
+the obvious key, but textual reports it as `backspace` — identical to the
+backspace key — so binding it would break editing the prompt.
 
 ## The default voice has no name
 
@@ -82,10 +85,16 @@ at launch).
 
 A backend is just "text → argv".
 
-- **`say`** — `/usr/bin/say`. No setup, every system voice.
+- **`say`** — `/usr/bin/say`. No setup, every system voice, and a trained
+  Personal Voice once it is granted.
 - **`av`** — a small Swift helper (`av_speak.swift`, compiled on first use and
-  cached in `~/.cache/speak/`) driving `AVSpeechSynthesizer`. Reaches two
-  things `say` cannot: Personal Voice, and SSML.
+  cached in `~/.cache/speak/`) driving `AVSpeechSynthesizer`. It exists for
+  SSML, which `say` cannot speak and which is the only route to pitch.
+
+Personal Voice is **not** exclusive to `av`: once trained and granted it
+appears in `say -v ?` and `say -v "<name>"` really speaks it — verified
+against the fallback voice, since a wrong name would exit 0 and sound
+plausible. `av` is worth it only for the stronger emphasis.
 
 ## Emphasis, and what macOS actually honours
 
@@ -111,7 +120,7 @@ So emphasis is faked from the two levers that survive:
 - `say` gets absolute `[[rate]]` bracketing, which pins the whole line to one
   rate — measurably audible (1.147s → 1.253s) but weak, since rate is all it has.
 - `av` gets scoped `<prosody>` pitch and rate, which is self-restoring and
-  works for all 180 voices.
+  works for every voice. This is the only reason the backend exists.
 
 The four tuning numbers are named constants in `core.py` with the measurement
 in the comment next to them.

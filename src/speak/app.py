@@ -196,7 +196,7 @@ class Speak(App):
 
     /* width must be explicit: `auto` on this container collapses it */
     #help {
-        width: 70; max-width: 95%; height: auto; max-height: 100%;
+        width: 74; max-width: 95%; height: auto; max-height: 100%;
         padding: 1 2;
         border: round $accent; background: $surface;
         overflow-y: auto;               /* scroll rather than clip when short */
@@ -212,6 +212,9 @@ class Speak(App):
         Binding("tab", "saved", "saved phrases", priority=True),
         Binding("ctrl+v", "voice", "voice", priority=True),
         Binding("ctrl+s", "save_phrase", "save", priority=True),
+        # ctrl+h is unusable: textual reports it as `backspace`, same as the
+        # backspace key, so binding it would break editing the prompt.
+        Binding("ctrl+g", "help", "keys", priority=True),
         Binding("f1", "help", "keys", priority=True),
         # NOT priority: an app-level priority binding outranks the active
         # screen's, so an open Picker would never see its own arrows or escape.

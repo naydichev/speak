@@ -1,10 +1,12 @@
-// AVSpeechSynthesizer backend. Two things /usr/bin/say cannot do:
+// AVSpeechSynthesizer backend. It exists for SSML, which /usr/bin/say cannot
+// speak, and SSML is the only route to pitch — measured on macOS 26, `say`'s
+// [[emph +]], [[pbas]] and [[volm]] and SSML's own <emphasis> all produce
+// byte-identical audio, i.e. they are parsed and discarded. Only
+// <prosody pitch/rate> in percent form actually moves the waveform.
 //
-//   1. Personal Voice — gated behind a runtime authorization request.
-//   2. SSML, so <prosody> emphasis that actually changes the waveform.
-//      Measured on macOS 26: `say`'s [[emph +]] and SSML <emphasis> both
-//      produce byte-identical audio, i.e. they are parsed and discarded.
-//      <prosody pitch/rate/volume> is the only thing that really works.
+// It also requests Personal Voice authorization. That is NOT exclusive to this
+// backend: once a personal voice is trained and granted, `say -v ?` lists it
+// and `say -v <name>` really speaks it (verified against the fallback).
 //
 //   av_speak --list                        list voices, personal ones marked
 //   av_speak <voice> <wpm> <text|ssml>     speak ("" = default, 0 = default rate)

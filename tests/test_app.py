@@ -307,12 +307,27 @@ async def test_typing_in_a_picker_filters_it(app, monkeypatch):
         assert app.cfg["voice"] == "Daniel"     # the value, not the shown label
 
 
-async def test_f1_opens_the_key_list_without_typing(app):
+@pytest.mark.parametrize("chord", ["f1", "ctrl+g"])
+async def test_a_chord_opens_the_key_list_without_typing(app, chord):
     async with app.run_test() as pilot:
-        await pilot.press("f1")
+        await pilot.press(chord)
         await pilot.pause()
 
         assert isinstance(app.screen, Help)
+
+
+async def test_backspace_still_edits_the_prompt(app):
+    """ctrl+h is deliberately unbound: textual reports it as `backspace`, so
+    binding it to help would eat this."""
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", Input)
+        prompt.value = "abc"
+        prompt.cursor_position = 3
+
+        await pilot.press("backspace")
+
+        assert prompt.value == "ab"
+        assert not isinstance(app.screen, Help)
 
 
 async def test_a_stray_key_does_not_close_the_key_list(app):

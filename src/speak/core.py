@@ -296,7 +296,7 @@ def command(line, cfg):
         if word == "rate" and not arg.isdigit():
             return "msg", "rate takes words per minute, e.g. /rate 220"
         if word == "backend" and arg not in ("say", "av"):
-            return "msg", "backend is 'say' or 'av' (av = Personal Voice + real emphasis)"
+            return "msg", "backend is 'say' or 'av' (av emphasises with pitch too)"
 
         cfg[word] = int(arg) if word == "rate" else arg
         save(cfg)
@@ -315,8 +315,8 @@ def save_target(buf, lines, sel):
     return lines[-1] if lines else ""
 
 # Two spellings, one rule, stated here because it is otherwise guesswork:
-# a chord acts on what is in front of you; a /command takes a typed value.
-# A row with no description is a heading.
+# a chord is immediate; a /command takes a typed value, or is destructive
+# enough to be worth typing. A row with no description is a heading.
 HELP_ROWS = [
     ("keys", None),
     ("type + ⏎",         "speak it — queued, so carry on typing"),
@@ -331,14 +331,13 @@ HELP_ROWS = [
     ("^C",               "stop talking and drop the queue"),
     ("^Q  ^D",           "quit"),
     ("\\",               "speak a literal leading / or !"),
-    ("F1",               "this list"),
+    ("^G  F1",           "this list (or /help)"),
 
     ("commands", None),
     ("/voice <name>",    "set it by name, when you know it"),
     ("/rate <wpm>",      "e.g. /rate 200"),
-    ("/backend say|av",  "av = Personal Voice, and real emphasis"),
-    ("/clear",           "empty the transcript"),
-    ("/help",            "this list"),
+    ("/backend say|av",  "av = stronger emphasis, via SSML pitch"),
+    ("/clear",           "empty the transcript (destructive, so typed)"),
 ]
 
 def fuzzy(labels, q):
