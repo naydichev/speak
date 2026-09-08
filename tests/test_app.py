@@ -376,7 +376,7 @@ async def test_ctrl_r_loads_the_picked_line_for_editing(app):
         await pilot.press("ctrl+r")
 
         assert app.query_one("#prompt", Input).value == "twe"
-        assert app.editing == 1
+        assert app.editing == ("line", 1)
         assert "replace line 2" in hint(app)
 
 
@@ -467,6 +467,58 @@ async def test_the_hint_bar_follows_the_selection(app):
         assert "^R edit" in hint(app) and "^X delete" in hint(app)
         await pilot.press("escape")
         assert "^D quit" in hint(app)
+
+
+async def test_ctrl_r_in_the_saved_list_edits_that_phrase(app):
+    """The transcript had ^R and the saved list did not, so a typo in a saved
+    phrase could only be fixed by deleting and retyping it."""
+    async with app.run_test() as pilot:
+        app.cfg["saved"] = [{"name": "yes plaese", "text": "yes plaese"}]
+
+        await pilot.press("tab")
+        await pilot.pause()
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, Picker)       # back on the prompt
+        assert app.query_one("#prompt", Input).value == "yes plaese"
+        assert app.editing == ("saved", 0)
+        assert "saved phrase 1" in hint(app)
+
+
+async def test_rewriting_a_saved_phrase_updates_it_without_saying_it(app):
+    async with app.run_test() as pilot:
+        app.cfg["saved"] = [{"name": "yes plaese", "text": "yes plaese"}]
+
+        await pilot.press("tab")
+        await pilot.pause()
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+
+        app.query_one("#prompt", Input).value = "yes please"
+        await pilot.press("enter")
+        app.sp.q.join()
+
+        assert app.cfg["saved"] == [{"name": "yes please", "text": "yes please"}]
+        assert app.spoken == []                         # fixing it, not saying it
+        assert app.lines == []                          # and not a new transcript line
+        assert app.editing is None
+
+
+async def test_escape_abandons_a_saved_phrase_edit(app):
+    async with app.run_test() as pilot:
+        app.cfg["saved"] = [{"name": "keep me", "text": "keep me"}]
+
+        await pilot.press("tab")
+        await pilot.pause()
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+
+        app.query_one("#prompt", Input).value = "clobbered"
+        await pilot.press("escape")
+
+        assert app.cfg["saved"] == [{"name": "keep me", "text": "keep me"}]
+        assert app.editing is None
 
 
 # --- settings ---------------------------------------------------------------

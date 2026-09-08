@@ -40,9 +40,9 @@ takes a typed value, or is destructive enough to be worth typing.** `^G` or
 | `⏎` | say the picked line again |
 | `Esc` | unpick |
 | `!3` | say line 3; `!` alone repeats the last |
-| `^R` | edit the picked line in place; `⏎` saves it without saying it |
+| `^R` | edit the picked line, or a saved phrase; `⏎` saves it silently |
 | `^X` | delete the picked line |
-| `⇥` | saved phrases — type to filter, `^X` deletes |
+| `⇥` | saved phrases — type to filter, `^R` edits, `^X` deletes |
 | `^V` | voice — type to filter |
 | `^S` | save the typed, picked, or last-said line |
 | `^C` | stop talking and drop the queue |

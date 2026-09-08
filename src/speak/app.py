@@ -22,7 +22,7 @@ headless: `uv run pytest`.
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
@@ -33,7 +33,10 @@ from speak import core
 # discoverable without a bar too wide to fit.
 HINTS = "⏎ speak · !3 redo · ⇥ saved · ^V voice · ^S save · ^C stop · ^D quit · ^G keys"
 HINTS_PICKED = "⏎ say again · ^R edit · ^X delete · ^S save · Esc unpick · ^G keys"
-HINTS_EDITING = "⏎ replace line {n}, without saying it · Esc cancel"
+HINTS_EDITING = {
+    "line": "⏎ replace line {n}, without saying it · Esc cancel",
+    "saved": "⏎ rewrite saved phrase {n} · Esc cancel",
+}
 CLOSED = -1                 # a Picker dismissed without choosing
 
 
@@ -98,11 +101,12 @@ class Picker(ModalScreen[int]):
         Binding("pagedown", "page(1)", "page down", priority=True),
     ]
 
-    def __init__(self, title, labels, on_delete=None):
+    def __init__(self, title, labels, on_delete=None, on_edit=None):
         super().__init__()
         self.heading = title
         self.labels = list(labels)
         self.on_delete = on_delete
+        self.on_edit = on_edit
         self.hits = []
 
     def compose(self) -> ComposeResult:
@@ -173,6 +177,17 @@ class Picker(ModalScreen[int]):
         self.labels.pop(i)
         self.repopulate()
 
+    def action_edit(self) -> None:
+        """Hand the row back to the caller, which owns the prompt."""
+        options = self.query_one("#picker-list", OptionList)
+
+        if not (self.hits and self.on_edit and options.highlighted is not None):
+            return
+
+        i = self.hits[options.highlighted][0]
+        self.dismiss(CLOSED)
+        self.on_edit(i)
+
     def action_close(self) -> None:
         self.dismiss(CLOSED)
 
@@ -180,9 +195,15 @@ class Picker(ModalScreen[int]):
 class Speak(App):
     CSS = """
     #status { dock: top; height: 1; background: $panel; padding: 0 1; }
-    #hints { dock: bottom; height: 1; color: $text-muted; padding: 0 1; }
-    #prompt { dock: bottom; }
     #transcript { height: 1fr; border: none; padding: 0 1; background: $surface; }
+
+    /* Docking the prompt and the bar separately made them contend for the
+       same rows, and the Input's lower rule was the one that lost. */
+    #bottom { dock: bottom; height: 3; }
+    #promptrow { height: 2; border-top: solid $accent; }
+    #caret { width: 3; padding: 0 0 0 1; color: $accent; }
+    #prompt { border: none; height: 1; padding: 0; }
+    #hints { height: 1; color: $text-muted; padding: 0 1; }
 
     Picker, Help { align: center middle; background: $background 60%; }
 
@@ -241,8 +262,13 @@ class Speak(App):
     def compose(self) -> ComposeResult:
         yield Static(id="status")
         yield OptionList(id="transcript")
-        yield Input(placeholder="say something", id="prompt")
-        yield Static(HINTS, id="hints")
+
+        with Vertical(id="bottom"):
+            with Horizontal(id="promptrow"):
+                yield Static(">", id="caret")
+                yield Input(placeholder="say something", id="prompt")
+
+            yield Static(HINTS, id="hints")
 
     def on_mount(self) -> None:
         self.repopulate()
@@ -279,7 +305,8 @@ class Speak(App):
         """Show a message, or fall back to the keys for the current context."""
         if text is None:
             if self.editing is not None:
-                text = HINTS_EDITING.format(n=self.editing + 1)
+                kind, at = self.editing
+                text = HINTS_EDITING[kind].format(n=at + 1)
             elif self.sel is not None:
                 text = HINTS_PICKED
             else:
@@ -302,9 +329,11 @@ class Speak(App):
         event.input.value = ""
 
         if self.editing is not None:
-            at, self.editing = self.editing, None
+            (kind, at), self.editing = self.editing, None
 
-            if line:
+            if not line:
+                self.note("edit cancelled")     # submitted empty
+            elif kind == "line":
                 self.lines[at] = line
                 core.trim_transcript(self.lines)
                 self.sel = at
@@ -313,7 +342,9 @@ class Speak(App):
                 # saying it. It stays picked, so ⏎ again speaks it.
                 self.note(f"line {at + 1} replaced — ⏎ says it")
             else:
-                self.note("edit cancelled")     # submitted empty
+                self.cfg["saved"][at] = {"name": line[:40], "text": line}
+                core.save(self.cfg)
+                self.note(f"saved phrase {at + 1} is now: {line[:40]}")
             return
 
         if not line:
@@ -370,19 +401,27 @@ class Speak(App):
         self.note()
 
     def action_edit_line(self) -> None:
+        """^R edits the highlighted row — a picker's, or the transcript's."""
+        if isinstance(self.screen, Picker):
+            self.screen.action_edit()
+            return
+
         if self.screen is not self.screen_stack[0]:
-            return                          # an overlay owns the keyboard
+            return                          # some other overlay owns the keys
 
         if self.sel is None:
             self.note("pick a line with ↑↓ first")
             return
 
+        self.start_edit(("line", self.sel), self.lines[self.sel])
+
+    def start_edit(self, target, text) -> None:
         prompt = self.query_one("#prompt", Input)
-        prompt.value = self.lines[self.sel]
-        prompt.cursor_position = len(prompt.value)
+        prompt.value = text
+        prompt.cursor_position = len(text)
         prompt.focus()
 
-        self.editing = self.sel
+        self.editing = target
         self.note()
 
     def action_delete_line(self) -> None:
@@ -440,9 +479,12 @@ class Speak(App):
             if i is not None and i != CLOSED:
                 self.speak(self.cfg["saved"][i]["text"])
 
+        def rewrite(i):
+            self.start_edit(("saved", i), self.cfg["saved"][i]["text"])
+
         self.push_screen(
-            Picker("saved   ⏎ speak · ^X delete",
-                   [s["name"] for s in self.cfg["saved"]], drop),
+            Picker("saved   ⏎ speak · ^R edit · ^X delete",
+                   [s["name"] for s in self.cfg["saved"]], drop, rewrite),
             chosen,
         )
 
