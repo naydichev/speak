@@ -19,6 +19,8 @@ All the logic lives in core.py, which imports no UI at all, so it is tested
 headless: `uv run pytest`.
 """
 
+import sys
+
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -530,7 +532,32 @@ class Speak(App):
         core.trim_transcript(core.load_transcript())    # cap the file on the way out
 
 
+USAGE = """speak — type a line, press Enter, keep typing while macOS talks.
+
+usage: speak [--version]
+
+No options worth having: everything is a key or a /command inside the app.
+Press ^G or F1 there for the list. State lives in
+~/.config/speak/config.json and ~/.local/share/speak/transcript.
+"""
+
+
 def main():
+    # A bare TUI that swallows --help and then blocks on a terminal it hasn't
+    # got is no fun to discover from a script.
+    if {"-h", "--help"} & set(sys.argv[1:]):
+        print(USAGE, end="")
+        return
+
+    if "--version" in sys.argv[1:]:
+        from speak import __version__
+
+        print(f"speak {__version__}")
+        return
+
+    if not sys.stdout.isatty():
+        sys.exit("speak: needs a terminal (stdout is not a tty)")
+
     Speak().run()
 
 

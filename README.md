@@ -23,8 +23,17 @@ in order. Nothing waits for the speech to finish.
 macOS only — it shells out to `say`.
 
 ```sh
+uv tool install --editable .    # puts `speak` on your PATH
+speak
+```
+
+`--editable` means edits to the source take effect immediately, with no
+reinstall. To hack on it without installing:
+
+```sh
 uv sync
 uv run speak
+uv run pytest
 ```
 
 ## Keys and commands

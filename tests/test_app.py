@@ -6,11 +6,15 @@ the port — ⏎ eaten by the focused Input, and ^X taken by its "cut" binding.
 Each test below names the mistake it would catch.
 """
 
+import sys
+
 import pytest
 from textual.widgets import Input, Static
 
+from speak import __version__ as core_version_str
+
 from speak import core
-from speak.app import Help, Picker, Speak
+from speak.app import USAGE, Help, Picker, Speak, main
 
 
 @pytest.fixture
@@ -51,6 +55,36 @@ async def seed(pilot, instance, *lines):
 
     instance.sp.q.join()
     instance.spoken.clear()
+
+
+# --- the command line ---
+
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_help_prints_instead_of_launching(flag, monkeypatch, capsys):
+    """It used to swallow the flag and then block on a terminal it hadn't got."""
+    monkeypatch.setattr(sys, "argv", ["speak", flag])
+
+    main()
+
+    assert "usage: speak" in capsys.readouterr().out
+
+
+def test_version_prints(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["speak", "--version"])
+
+    main()
+
+    assert core_version_str in capsys.readouterr().out
+
+
+def test_no_terminal_exits_rather_than_hanging(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["speak"])
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+
+    with pytest.raises(SystemExit) as raised:
+        main()
+
+    assert "needs a terminal" in str(raised.value)
 
 
 # --- speaking ---------------------------------------------------------------
