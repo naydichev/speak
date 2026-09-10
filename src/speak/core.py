@@ -211,8 +211,8 @@ def command(line, cfg):
     """Handle a /line typed at the prompt.
 
     Returns (action, message): action is "msg", "help" or "clear", so the UI
-    decides what to do with it rather than reading a sentinel. Quitting is a
-    chord only (^Q / ^D) — /quit was the one command that duplicated one.
+    decides what to do with it rather than reading a sentinel. There is no
+    /quit; ^C and ^D do it, and so does ^Q, which textual binds itself.
     """
     word, _, arg = line[1:].partition(" ")
     arg = arg.strip()
@@ -255,30 +255,29 @@ def save_target(buf, lines, sel):
 
     return lines[-1] if lines else ""
 
-# Two spellings, one rule, stated here because it is otherwise guesswork:
-# a chord is immediate; a /command takes a typed value, or is destructive
-# enough to be worth typing. A row with no description is a heading.
+# Two spellings, one rule: a key does something to what you are saying, a
+# /command configures the app. A row with no description is a heading.
 HELP_ROWS = [
     ("keys", None),
     ("type + ⏎",         "speak it — queued, so carry on typing"),
     ("↑ ↓",              "pick a past line, wrapping at both ends"),
     ("⏎",                "say the picked line again"),
-    ("Esc",              "unpick"),
+    ("Esc",              "unpick, or stop talking if nothing is picked"),
     ("!3",               "say line 3; ! alone repeats the last"),
     ("^R",               "edit the picked line, or a saved phrase"),
     ("^X",               "delete the picked line"),
     ("⇥",                "saved phrases — filter, ^R edits, ^X deletes"),
     ("^V",               "voice — type to filter"),
     ("^S",               "save the typed, picked, or last-said line"),
-    ("^C",               "stop talking and drop the queue"),
-    ("^Q  ^D",           "quit"),
+    ("^C  ^D  ^Q",       "quit"),
     ("\\",               "speak a literal leading / or !"),
-    ("^G  F1",           "this list (or /help)"),
+    ("F1",               "this list — or type /help"),
 
     ("commands", None),
     ("/voice <name>",    "set by name; bare /voice restores the default"),
     ("/rate <wpm>",      "e.g. /rate 200; bare /rate is 175, the default"),
-    ("/clear",           "empty the transcript (destructive, so typed)"),
+    ("/clear",           "empty the transcript"),
+    ("/help",            "this list"),
 ]
 
 

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Full-screen talker: type a line, press Enter, keep typing while it talks.
+"""A full-screen TUI for macOS's built-in `say`.
+
+Type a line, press Enter, and keep typing while it talks.
 
     ┌──────────────────────────────────────────────────────────────┐
     │ speak                          Daniel · 200wpm · speaking +2 │  status
@@ -9,12 +11,12 @@
     │    4 was ist das                                             │
     │ ──────────────────────────────────────────────────────────── │
     │ > what i'm typing now                                        │  input
-    │ ⏎ speak · !3 redo · ⇥ saved · ^V voice · ^C stop · ^G keys   │  keys
+    │ ⏎ speak · !3 redo · ⇥ saved · ^V voice · Esc stop · /help   │  keys
     └──────────────────────────────────────────────────────────────┘
 
 Lines queue through one worker thread, so typing ahead speaks in order.
 Arrows pick a past line to say again (wrapping at both ends); !3 says the
-line numbered 3, ^R edits one and ^X deletes one. ^G lists every key.
+line numbered 3, ^R edits one and ^X deletes one. /help lists every key.
 
 All the logic lives in core.py, which imports no UI at all, so it is tested
 headless: `uv run pytest`.
@@ -35,8 +37,8 @@ from speak import core
 
 # The bar follows what you are doing, which is also how the line keys stay
 # discoverable without a bar too wide to fit.
-HINTS = "⏎ speak · !3 redo · ⇥ saved · ^V voice · ^S save · ^C stop · ^D quit · ^G keys"
-HINTS_PICKED = "⏎ say again · ^R edit · ^X delete · ^S save · Esc unpick · ^G keys"
+HINTS = "⏎ speak · !3 redo · ⇥ saved · ^V voice · ^S save · Esc stop · ^C quit · /help"
+HINTS_PICKED = "⏎ say again · ^R edit · ^X delete · ^S save · Esc unpick · /help"
 HINTS_EDITING = {
     "line": "⏎ replace line {n}, without saying it · Esc cancel",
     "saved": "⏎ rewrite saved phrase {n} · Esc cancel",
@@ -231,9 +233,8 @@ class Speak(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+q", "quit", "quit", priority=True),
         Binding("ctrl+d", "quit", "quit", priority=True),
-        Binding("ctrl+c", "stop", "stop talking", priority=True),
+        Binding("ctrl+c", "quit", "quit", priority=True),
         Binding("tab", "saved", "saved phrases", priority=True),
         Binding("ctrl+v", "voice", "voice", priority=True),
         Binding("ctrl+s", "save_phrase", "save", priority=True),
@@ -241,16 +242,16 @@ class Speak(App):
         # prompt its "cut", which nothing here needs, and matches the pickers.
         Binding("ctrl+r", "edit_line", "edit the picked line", priority=True),
         Binding("ctrl+x", "delete_line", "delete the picked line", priority=True),
-        # ctrl+h is unusable: textual reports it as `backspace`, same as the
-        # backspace key, so binding it would break editing the prompt.
-        Binding("ctrl+g", "help", "keys", priority=True),
+        # No ctrl+h: textual reports it as `backspace`, same as the backspace
+        # key, so binding it would break editing the prompt. F1 needs no
+        # mnemonic, and /help is there for keyboards where F1 is awkward.
         Binding("f1", "help", "keys", priority=True),
         # NOT priority: an app-level priority binding outranks the active
         # screen's, so an open Picker would never see its own arrows or escape.
         # The prompt Input claims none of these three, so they still arrive.
         Binding("up", "move(-1)", "up"),
         Binding("down", "move(1)", "down"),
-        Binding("escape", "unpick", "unpick"),
+        Binding("escape", "cancel", "cancel"),
     ]
 
     def __init__(self, run=None):
@@ -459,18 +460,25 @@ class Speak(App):
         self.repopulate()
         self.note(f"deleted: {gone[:40]}")
 
-    def action_unpick(self) -> None:
+    def action_cancel(self) -> None:
+        """Esc means cancel, and what there is to cancel depends on where you are.
+
+        Stopping the speech is deliberately last. Esc is also how you get back
+        to typing from a picked line, and silently dropping a queue you had
+        just typed ahead would be a nasty thing for a navigation key to do.
+        """
         if self.editing is not None:
             self.editing = None
             self.query_one("#prompt", Input).value = ""
             self.note("edit cancelled")
             return
 
-        self.sel = None
-        self.query_one("#transcript", OptionList).highlighted = None
-        self.note()
+        if self.sel is not None:
+            self.sel = None
+            self.query_one("#transcript", OptionList).highlighted = None
+            self.note()
+            return
 
-    def action_stop(self) -> None:
         self.sp.stop()
         self.note("stopped")
 
@@ -540,12 +548,12 @@ class Speak(App):
         core.trim_transcript(core.load_transcript())    # cap the file on the way out
 
 
-USAGE = """speak — type a line, press Enter, keep typing while macOS talks.
+USAGE = """speak — a full-screen TUI for macOS's built-in `say`.
 
 usage: speak [--version]
 
 No options worth having: everything is a key or a /command inside the app.
-Press ^G or F1 there for the list. State lives in
+Type /help there for the list. State lives in
 ~/.config/speak/config.json and ~/.local/share/speak/transcript.
 """
 

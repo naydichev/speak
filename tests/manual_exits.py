@@ -48,7 +48,8 @@ def run(label, finish):
     return ok
 
 results = [
-    run("^Q",            lambda pid, fd: os.write(fd, b"\x11")),
+    run("^C",            lambda pid, fd: os.write(fd, b"\x03")),
+    run("^Q (textual's)", lambda pid, fd: os.write(fd, b"\x11")),
     run("^D",            lambda pid, fd: os.write(fd, b"\x04")),
     run("SIGTERM (kill)", lambda pid, fd: os.kill(pid, signal.SIGTERM)),
     run("SIGHUP (close window)", lambda pid, fd: os.kill(pid, signal.SIGHUP)),

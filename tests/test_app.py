@@ -1,8 +1,8 @@
 """Interaction checks, driven through textual's pilot.
 
 These exist because the interaction layer is where the bugs actually landed:
-a picker that never repainted, ^Q swallowed inside an overlay, and — after
-the port — ⏎ eaten by the focused Input, and ^X taken by its "cut" binding.
+a picker that never repainted, a quit key swallowed inside an overlay, and —
+after the port — ⏎ eaten by the focused Input, and ^X taken by its "cut".
 Each test below names the mistake it would catch.
 """
 
@@ -162,15 +162,34 @@ async def test_arrows_enter_at_the_near_end_and_wrap(app):
         assert app.sel == 2                     # wraps the other way
 
 
-async def test_escape_unpicks(app):
+async def test_escape_unpicks_without_stopping_the_speech(app, monkeypatch):
+    """Esc is how you get back to typing, so it must not drop a queue you
+    typed ahead. Spying on stop() rather than the queue, which the recording
+    backend drains too fast to observe."""
     async with app.run_test() as pilot:
         await seed(pilot, app, "one", "two")
+        stopped = []
+        monkeypatch.setattr(app.sp, "stop", lambda: stopped.append(1))
 
         await pilot.press("up")
         assert app.sel is not None
 
         await pilot.press("escape")
         assert app.sel is None
+        assert stopped == []                    # navigating silences nothing
+
+
+async def test_escape_stops_talking_when_nothing_is_picked(app, monkeypatch):
+    async with app.run_test() as pilot:
+        await seed(pilot, app, "one")
+        stopped = []
+        monkeypatch.setattr(app.sp, "stop", lambda: stopped.append(1))
+
+        assert app.sel is None
+        await pilot.press("escape")
+
+        assert stopped == [1]
+        assert hint(app) == "stopped"
 
 
 async def test_bang_speaks_the_numbered_line_and_leaves_it_picked(app):
@@ -209,15 +228,18 @@ async def test_backslash_escapes_a_leading_bang(app):
 
 # --- reserved keys ----------------------------------------------------------
 
-async def test_ctrl_c_stops_talking_instead_of_quitting(app):
-    """textual reserves ctrl+c for quit; the binding overrides it."""
+@pytest.mark.parametrize("key", ["ctrl+c", "ctrl+d", "ctrl+q"])
+async def test_every_quit_key(app, key):
+    """^C is the convention and ^D is EOF; both are bound here. ^Q is not — it
+    comes from textual's own App.BINDINGS, so it is covered to catch textual
+    dropping it, not because this app asks for it."""
     async with app.run_test() as pilot:
         await seed(pilot, app, "one")
 
-        await pilot.press("ctrl+c")
+        await pilot.press(key)
+        await pilot.pause()
 
-        assert app.is_running
-        assert hint(app) == "stopped"
+        assert not app.is_running
 
 
 async def test_tab_opens_the_saved_list_instead_of_moving_focus(app):
@@ -354,13 +376,23 @@ async def test_typing_in_a_picker_filters_it(app, monkeypatch):
         assert app.cfg["voice"] == "Daniel"     # the value, not the shown label
 
 
-@pytest.mark.parametrize("chord", ["f1", "ctrl+g"])
-async def test_a_chord_opens_the_key_list_without_typing(app, chord):
+async def test_f1_opens_the_key_list_without_typing(app):
     async with app.run_test() as pilot:
-        await pilot.press(chord)
+        await pilot.press("f1")
         await pilot.pause()
 
         assert isinstance(app.screen, Help)
+
+
+async def test_slash_help_opens_the_key_list(app):
+    """F1 needs fn on some Mac keyboards, so typing has to work too."""
+    async with app.run_test() as pilot:
+        app.query_one("#prompt", Input).value = "/help"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, Help)
+        assert app.spoken == []                 # not spoken as a line
 
 
 async def test_backspace_still_edits_the_prompt(app):
@@ -508,11 +540,11 @@ async def test_the_hint_bar_follows_the_selection(app):
     async with app.run_test() as pilot:
         await seed(pilot, app, "one")
 
-        assert "^D quit" in hint(app)
+        assert "^C quit" in hint(app)
         await pilot.press("up")
         assert "^R edit" in hint(app) and "^X delete" in hint(app)
         await pilot.press("escape")
-        assert "^D quit" in hint(app)
+        assert "^C quit" in hint(app)
 
 
 async def test_ctrl_r_in_the_saved_list_edits_that_phrase(app):
