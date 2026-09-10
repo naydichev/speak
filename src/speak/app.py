@@ -561,11 +561,13 @@ def main():
 
     app = Speak()
 
-    # Python's default SIGTERM exits without unwinding, so textual never
-    # restores the terminal. Measured: the app turns mouse tracking on
-    # (?1000h ?1003h ?1006h) and a SIGTERM emitted no matching `l` at all —
+    # Python's default handlers for these exit without unwinding, so textual
+    # never restores the terminal. Measured: the app turns mouse tracking on
+    # (?1000h ?1003h ?1006h) and neither signal emitted a matching `l` —
     # leaving the shell echoing raw mouse reports as text over a dead screen.
-    signal.signal(signal.SIGTERM, lambda *_: app.exit())
+    # SIGHUP is what a closing terminal window sends, so it is not exotic.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda *_: app.exit())
 
     app.run()
 

@@ -166,7 +166,7 @@ src/speak/core.py         speech, config, voice parsing, fuzzy matching — no U
 src/speak/app.py          the textual app
 tests/test_core.py        headless
 tests/test_app.py         driven through textual's pilot
-tests/manual_sigterm.py   needs a real pty; run by hand
+tests/manual_exits.py     needs a real pty and signals; run by hand
 ```
 
 `core.py` deliberately imports no UI, so the logic is testable without a
@@ -176,16 +176,19 @@ terminal:
 uv run pytest
 ```
 
-One check needs a real pty and a real signal, so it is not a pytest — run it
+One check needs a real pty and real signals, so it is not a pytest — run it
 by hand after touching startup:
 
 ```sh
-python3 tests/manual_sigterm.py
+python3 tests/manual_exits.py
 ```
 
-It asserts the app turns mouse tracking back off when killed. If it does not,
-the shell is left echoing raw mouse reports as text over the dead screen,
-which looks alarmingly like the app corrupting itself.
+It ends the app five ways (`^Q`, `^D`, SIGTERM, SIGHUP, SIGINT) and asserts
+each one turns mouse tracking back off. If any does not, the terminal keeps
+reporting mouse motion to a shell that echoes it, and the screen fills with
+fragments like `M35;2262;-3M` over the dead app's last frame — which reads as
+the app corrupting itself. SIGHUP is the one to watch: it is what a closing
+terminal window sends.
 
 ## Licence
 
