@@ -85,6 +85,20 @@ def test_no_terminal_exits_rather_than_hanging(monkeypatch):
     assert "needs a terminal" in str(raised.value)
 
 
+# --- the status timer -------------------------------------------------------
+
+async def test_the_status_timer_survives_teardown(app):
+    """It fires every 0.2s, including while the widgets are being removed, so
+    it cannot assume they are still there. Raising from a timer callback made
+    the suite flaky and printed a traceback on exit."""
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#status").remove()
+        await pilot.pause()
+
+        app.show_status()               # must be a no-op, not a NoMatches
+
+
 # --- speaking ---------------------------------------------------------------
 
 async def test_typing_a_line_speaks_it_and_records_it(app):

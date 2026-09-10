@@ -291,6 +291,12 @@ class Speak(App):
             options.scroll_end(animate=False)       # newest stays in view
 
     def show_status(self) -> None:
+        # Fires every 0.2s, including while the widgets are being torn down,
+        # so it cannot assume they are still mounted. Raising here throws from
+        # a timer callback: a traceback on exit, and a flaky test suite.
+        if not self.query("#status"):
+            return
+
         pending = self.sp.pending()
         bits = [
             self.cfg["voice"] or "default",
