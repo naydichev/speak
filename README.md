@@ -1,46 +1,42 @@
 # speak
 
-Type a line, press Enter, and keep typing while macOS talks. A full-screen
+Type a line, press Enter, and keep typing while macOS says it. A full-screen
 front end for `say`, for when typing is faster than speaking.
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│ speak                     Daniel · 200wpm · speaking +2 │
-│    1 hello there                                         │
-│    2 how are you doing                                   │
-│    3 i'm doing fine, thanks                              │
-│    4 ^R edits one, ^X deletes one                        │
-│ > what i'm typing now                                    │
-│ ↑↓ pick · ⏎ speak · !3 redo · ⇥ saved · ^V voice · /help │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ speak                          Daniel · 200wpm · speaking +2 │
+│    1 hello there                                             │
+│    2 how are you doing                                       │
+│    3 i'm doing fine, thanks                                  │
+│    4 was ist das                                             │
+│ ──────────────────────────────────────────────────────────── │
+│ > what i'm typing now                                        │
+│ ⏎ speak · !3 redo · ⇥ saved · ^V voice · ^C stop · ^G keys   │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 Lines queue through one worker thread, so you can type ahead and they come out
-in order. Nothing waits for the speech to finish.
+in order — nothing waits for the speech to finish. Past lines stay on screen
+to say again, edit, or save as a phrase.
+
+macOS only: it shells out to `say`.
 
 ## Install
 
-macOS only — it shells out to `say`.
-
 ```sh
-uv tool install --editable .    # puts `speak` on your PATH
+uv tool install --editable .
 speak
 ```
 
-`--editable` means edits to the source take effect immediately, with no
-reinstall. To hack on it without installing:
-
-```sh
-uv sync
-uv run speak
-uv run pytest
-```
+`--editable` keeps the code in this checkout, so edits apply on next launch.
+Adding a dependency later needs `uv tool upgrade speak`.
 
 ## Keys and commands
 
-There are two spellings, and one rule: **a chord is immediate; a `/command`
-takes a typed value, or is destructive enough to be worth typing.** `^G` or
-`F1` shows this list in the app.
+Two spellings, one rule: **a chord is immediate; a `/command` takes a typed
+value, or is destructive enough to be worth typing.** `^G` or `F1` shows this
+list in the app.
 
 | key | |
 |---|---|
@@ -49,7 +45,7 @@ takes a typed value, or is destructive enough to be worth typing.** `^G` or
 | `⏎` | say the picked line again |
 | `Esc` | unpick |
 | `!3` | say line 3; `!` alone repeats the last |
-| `^R` | edit the picked line, or a saved phrase; `⏎` saves it silently |
+| `^R` | edit the picked line, or a saved phrase — saves silently |
 | `^X` | delete the picked line |
 | `⇥` | saved phrases — type to filter, `^R` edits, `^X` deletes |
 | `^V` | voice — type to filter |
@@ -57,7 +53,7 @@ takes a typed value, or is destructive enough to be worth typing.** `^G` or
 | `^C` | stop talking and drop the queue |
 | `^Q` `^D` | quit |
 | `\` | speak a literal leading `/` or `!` |
-| `^G` `F1` | this list (`/help` works too) |
+| `^G` `F1` | this list |
 
 | command | |
 |---|---|
@@ -65,101 +61,80 @@ takes a typed value, or is destructive enough to be worth typing.** `^G` or
 | `/rate <wpm>` | e.g. `/rate 200`; bare `/rate` restores 175 |
 | `/clear` | empty the transcript (destructive, so typed) |
 
-Quitting is a chord only — `/quit` was the one command that duplicated one.
-Help is a chord for the same reason: it takes no value. `^H` would have been
-the obvious key, but textual reports it as `backspace` — identical to the
-backspace key — so binding it would break editing the prompt.
+Quitting and help are chords only — neither takes a value, and `/quit`
+duplicated `^Q`.
 
-## The default voice has no name
-
-With no voice set, `say` uses the **System Voice** from Settings →
-Accessibility → Spoken Content. If that is a Siri voice, neither `say -v ?`
-nor `AVSpeechSynthesisVoice.speechVoices()` lists it: rendering the same
-sentence through all 184 named voices matched none of them. So the status bar
-says `default` rather than a name, and the voice picker carries an explicit
-`(system default)` row — without it, choosing a voice would be a one-way door.
-
-Two related traps found while measuring this:
-
-- `say -v <name-that-does-not-exist>` **exits 0** and silently substitutes a
-  fallback voice. A typo is silent, not an error.
-- Several familiar names (`Alex`, `Zoe`, `Samantha`) render byte-identically
-  here, because only one of them is installed and the others fall back to it.
-
-State lives in `~/.config/speak/config.json` (voice, rate, backend, saved
-phrases) and `~/.local/share/speak/transcript` (the last 500 lines, reloaded
-at launch).
-
-## What `say` will and will not do
-
-Two traps worth knowing, both measured:
-
-- `say -v <name-that-does-not-exist>` **exits 0** and silently substitutes a
-  fallback voice. A typo is invisible, not an error. (This is why a voice left
-  behind by an older version of this tool is discarded on load — it stored
-  identifiers, which `say` cannot use.)
-- **175 wpm is the default.** `say -r 175` is byte-identical to no `-r` at all,
-  on every voice tried including a trained personal one. Short samples cannot
-  show this: some voices return identical audio for `-r 160`, `175` and `180`,
-  so a 6-word phrase interpolates to a wrong answer.
-
-### Emphasis was tried, and cut
-
-An earlier version marked words with `_word_` / `*word*`. It is gone, because
-nothing macOS offers actually stresses one word:
-
-| lever | result |
-|---|---|
-| `say` `[[emph +]]`, `[[pbas]]`, `[[volm]]` | **byte-identical audio** — parsed and discarded |
-| `say` `[[slnc N]]` | honoured, but **N is ignored** — always a fixed ~410ms |
-| `say` `[[rate N]]` around one word | **faster** than the plain line (1.243s vs 1.291s) |
-| SSML `<emphasis level="strong">` | byte-identical — dropped |
-| SSML `<prosody pitch="+30%">` | audibly different, but reads as a glitch, not stress |
-
-The last row is the honest reason. Overriding one word's pitch fights the
-contour the synthesiser is already applying to the phrase, so it sounds wrong
-rather than emphatic. Cutting it removed a Swift helper, a second speech
-backend, a compile-on-first-run step, and two incompatible voice-naming
-schemes — for a feature that never worked.
-
-Leftover markers are harmless: `say` ignores `_` and `*` outright, so an old
-habit costs nothing but the characters on screen.
+State lives in `~/.config/speak/config.json` (voice, rate, saved phrases) and
+`~/.local/share/speak/transcript` (the last 500 lines, reloaded at launch).
 
 ## Personal Voice
 
-Setup, in order:
+A trained Personal Voice appears in `say -v ?` like any other voice, so `^V`
+lists it and nothing else is needed. Getting it trained is the fiddly part:
 
 1. Create one in **Settings → Accessibility → Personal Voice** (~15 minutes of
    reading phrases aloud).
-2. Turn on **Allow applications to use your Personal Voice** in that same pane.
-3. **Click into the voice's own row and press "Start training…".** This is the
-   step that is easy to miss: training does *not* start on its own, and the
-   outer row says "Recording complete" the whole time it is waiting for you.
-   Once pressed it shows "Preparing", and generation runs on-device — leave the
-   Mac on power; it takes hours, not minutes.
-4. Check whether the asset has landed:
+2. Turn on **Allow applications to use your Personal Voice** in that pane.
+3. **Open the voice's own row and press "Start training…".** Easy to miss:
+   training does not begin on its own, and the outer row reads "Recording
+   complete" the whole time it is waiting for you. It then shows "Preparing",
+   and generation runs on-device — leave the Mac on power, it takes hours.
+4. Check whether it has landed: `say -v '?' | grep -i personal`
 
-   ```sh
-   say -v '?' | grep -i personal
-   ```
-
-Once trained and granted it appears in `say -v ?` like any other voice, so
-`^V` lists it and nothing else is needed.
-
-### Diagnosing it
-
-The two states look identical from the outside, so check which one you are in:
+The three failure states look identical from outside, so:
 
 | symptom | meaning |
 |---|---|
-| the voice never appears in `say -v ?` | not granted, not trained, or still preparing |
-| `~/Library/Group Containers/group.com.apple.accessibility.voicebanking/` empty | the asset has not been generated on this Mac |
+| never appears in `say -v ?` | not granted, not trained, or still preparing |
+| `~/Library/Group Containers/group.com.apple.accessibility.voicebanking/` is empty | not generated on this Mac yet |
 
 The app grant is attributed to whichever app is in the foreground when it is
-requested (a bare CLI has no bundle identity of its own), but it applies
+requested — a bare CLI has no bundle identity of its own — but it applies
 everywhere once given.
 
-## Layout
+## Notes on `say`
+
+Things measured while building this, none of them documented anywhere obvious.
+
+**A wrong voice name is silent.** `say -v <name-that-does-not-exist>` exits 0
+and substitutes a fallback voice. A typo is invisible rather than an error.
+Voices left behind by an older version of this tool are discarded on load for
+the same reason — it stored identifiers, which `say` cannot use.
+
+**175 wpm is the default.** `say -r 175` is byte-identical to no `-r` at all,
+on every voice tried including a trained personal one. Short samples cannot
+show this: some voices return identical audio for `-r 160`, `175` and `180`,
+so a 6-word phrase interpolates to a wrong answer.
+
+**The default voice has no name.** With no `-v`, `say` uses the System Voice
+from Settings → Accessibility → Spoken Content. If that is a Siri voice, `say
+-v ?` does not list it — rendering one sentence through every listed voice
+matched none of them. So the status bar says `default`, and the voice picker
+carries an explicit `(system default)` row; without it, choosing a voice would
+be a one-way door.
+
+**Nothing stresses a single word.** Emphasis (`_word_`, `*word*`) was built and
+cut. Every lever:
+
+| lever | result |
+|---|---|
+| `[[emph +]]`, `[[pbas]]`, `[[volm]]` | **byte-identical audio** — parsed and discarded |
+| `[[slnc N]]` | honoured, but **N is ignored** — always a fixed ~410ms |
+| `[[rate N]]` around one word | **faster** than the plain line (1.243s vs 1.291s) |
+| `[[rate -25%]]` relative | compounds and never restores |
+| SSML `<emphasis level="strong">` | byte-identical — dropped |
+| SSML `<prosody pitch="+30%">` | audibly different, but reads as a glitch |
+
+The single-word `[[rate]]` case is the interesting failure: the rate changes
+perturb phrase timing more than they lengthen the word. SSML pitch does change
+the audio, but overriding one word fights the contour the synthesiser is
+already applying, so it sounds wrong rather than emphatic. Cutting it removed a
+Swift helper, a second speech backend, a compile-on-first-run step and two
+incompatible voice-naming schemes.
+
+Leftover markers are harmless: `say` ignores `_` and `*` outright.
+
+## Development
 
 ```
 src/speak/core.py         speech, config, voice parsing, fuzzy matching — no UI import
@@ -169,22 +144,22 @@ tests/test_app.py         driven through textual's pilot
 tests/manual_exits.py     needs a real pty and signals; run by hand
 ```
 
-`core.py` deliberately imports no UI, so the logic is testable without a
-terminal:
+`core.py` imports no UI, so the logic is testable without a terminal:
 
 ```sh
+uv sync
 uv run pytest
+uv run speak       # without disturbing the installed copy
 ```
 
-One check needs a real pty and real signals, so it is not a pytest — run it
-by hand after touching startup:
+One check needs a real pty and real signals, so it is not a pytest:
 
 ```sh
 python3 tests/manual_exits.py
 ```
 
 It ends the app five ways (`^Q`, `^D`, SIGTERM, SIGHUP, SIGINT) and asserts
-each one turns mouse tracking back off. If any does not, the terminal keeps
+each turns mouse tracking back off. If any does not, the terminal keeps
 reporting mouse motion to a shell that echoes it, and the screen fills with
 fragments like `M35;2262;-3M` over the dead app's last frame — which reads as
 the app corrupting itself. SIGHUP is the one to watch: it is what a closing
