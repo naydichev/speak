@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
 
       # Publishing 0.1.0 from a v0.2.0 tag is unrecoverable — PyPI does not
       # allow re-uploading a version — so fail before the upload, not after.
