@@ -39,6 +39,18 @@ def spoken():
     return make
 
 
+# --- version -----------------------------------------------------------------
+
+def test_the_reported_version_is_the_installed_one():
+    """It was hardcoded beside pyproject's, drifted, and `speak --version`
+    then reported 0.1.0 from a 0.2.0 checkout."""
+    from importlib.metadata import version
+
+    import speak
+
+    assert speak.__version__ == version("speak-tui")
+
+
 # --- the `say` argv -----------------------------------------------------------
 
 def test_argv_carries_voice_and_rate(spoken):

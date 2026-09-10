@@ -13,6 +13,13 @@ launch:
 uv tool install --editable .
 ```
 
+Editable tracks source *files*, not metadata, so after bumping the version the
+installed copy still reports the old one until you reinstall:
+
+```sh
+uv tool install --editable . --force
+```
+
 ## Layout
 
 ```
