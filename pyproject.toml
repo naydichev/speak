@@ -5,6 +5,7 @@ description = "Type a line, press Enter, and keep typing while macOS talks"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Julian Naydichev" }]
 keywords = ["tts", "speech", "accessibility", "aac", "macos", "textual", "tui"]
 dependencies = ["textual>=0.80"]

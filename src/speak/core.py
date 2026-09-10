@@ -15,11 +15,11 @@ TRANSCRIPT = os.path.expanduser("~/.local/share/speak/transcript")
 DEFAULTS = {"voice": None, "rate": None, "saved": []}
 
 
-SAY_EMPH_RATE = 0.5         # fraction of base wpm; pushed harder, being alone
 SAY_BASE_WPM = 175          # `say`'s own default, measured: `say -r 175` is
                             # byte-identical to no -r at all, on every voice
                             # tried including a trained personal one
 KEEP = 500                  # transcript lines carried across restarts
+
 
 def load():
     # "saved" is rebuilt rather than copied from DEFAULTS: a shallow copy
@@ -40,10 +40,26 @@ def load():
 
     return cfg
 
+
 def save(cfg):
+    """Write the config, or leave the previous one untouched.
+
+    Opening CONFIG directly truncates it first, so a failure part-way through
+    json.dump left a half-written file and every saved phrase was gone. Write
+    beside it and rename: os.replace is atomic within a filesystem.
+    """
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
-    with open(CONFIG, "w") as f:
-        json.dump(cfg, f, indent=2)
+    tmp = f"{CONFIG}.new"
+
+    try:
+        with open(tmp, "w") as f:
+            json.dump(cfg, f, indent=2)
+
+        os.replace(tmp, CONFIG)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
 
 def load_transcript():
     try:
@@ -52,11 +68,13 @@ def load_transcript():
     except OSError:
         return []
 
+
 def append_transcript(line):
     """Appended per line so a crash never loses what was said."""
     os.makedirs(os.path.dirname(TRANSCRIPT), exist_ok=True)
     with open(TRANSCRIPT, "a") as f:
         f.write(line + "\n")
+
 
 def trim_transcript(lines):
     os.makedirs(os.path.dirname(TRANSCRIPT), exist_ok=True)
@@ -67,7 +85,7 @@ def trim_transcript(lines):
 class Speaker:
     """Serialises spoken lines through one worker thread.
 
-    `run` is injected so the self-test records argv instead of talking.
+    `run` is injected so tests record argv instead of talking.
     """
 
     def __init__(self, cfg, run=None):
@@ -75,8 +93,12 @@ class Speaker:
         self.run = run or subprocess.Popen
         self.q = queue.Queue()
         self.proc = None
-        self.error = None
         self.lock = threading.Lock()
+
+        # Written by the worker, read and cleared by the UI. A plain
+        # attribute is enough: one writer, and a lost message would only
+        # ever be a stale duplicate of one already shown.
+        self.error = None
 
         threading.Thread(target=self._drain, daemon=True).start()
 
@@ -129,6 +151,7 @@ class Speaker:
             if self.proc:
                 self.proc.kill()
 
+
 def parse_say_voices(out):
     """[(label, name)] from `say -v ?`.
 
@@ -148,29 +171,22 @@ def parse_say_voices(out):
     return voices
 
 
-def voice_names(cfg=None):
+def voice_names():
     """[(label, name)]: the label is shown, the name goes to `say -v`.
 
     The first row clears the setting. It has to exist, because `say` with no
     -v uses the System Voice from Settings > Accessibility > Spoken Content,
-    and if that is a Siri voice then NEITHER `say -v ?` nor
-    AVSpeechSynthesisVoice.speechVoices() lists it — measured: its audio
-    matches none of the 184 names. Without this row, picking any voice is a
-    one-way door away from the default.
+    and if that is a Siri voice then `say -v ?` does not list it — measured:
+    its audio matched none of the listed names. Without this row, picking any
+    voice is a one-way door away from the default.
     """
     out = subprocess.run(["say", "-v", "?"], capture_output=True, text=True)
 
     return [("(system default)", None)] + parse_say_voices(out.stdout)
 
 
-
-
-
-
-
-
-
 BANG = re.compile(r"!(\d*)")
+
 
 def bang(line, n):
     """'!3' -> index of line 3, numbered from the top; '!' alone -> the last line.
@@ -189,6 +205,7 @@ def bang(line, n):
     at = int(m.group(1))
 
     return at - 1 if 1 <= at <= n else -1
+
 
 def command(line, cfg):
     """Handle a /line typed at the prompt.
@@ -218,7 +235,9 @@ def command(line, cfg):
 
             return "msg", "voice = system default"
 
-        if word == "rate" and not arg.isdigit():
+        # "0" passes isdigit() but reads as falsy later, so it would have
+        # silently meant "default" instead of being rejected.
+        if word == "rate" and not (arg.isdigit() and int(arg) > 0):
             return "msg", "rate takes words per minute, e.g. /rate 220"
         cfg[word] = int(arg) if word == "rate" else arg
         save(cfg)
@@ -261,6 +280,7 @@ HELP_ROWS = [
     ("/rate <wpm>",      "e.g. /rate 200; bare /rate is 175, the default"),
     ("/clear",           "empty the transcript (destructive, so typed)"),
 ]
+
 
 def fuzzy(labels, q):
     """[(index, matched positions)] for labels matching q as a subsequence.

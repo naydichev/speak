@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """Full-screen talker: type a line, press Enter, keep typing while it talks.
 
-    ┌──────────────────────────────────────────────────────────┐
-    │ speak                     Daniel · 200wpm · speaking +2 │  status
-    │    1 hello there                                         │  transcript,
-    │    2 how are you doing                                   │  newest last
-    │    3 i'm doing fine, thanks                              │  ↑↓ picks one
-    │    4 ^R edits one, ^X deletes one                        │
-    │ > what i'm typing now                                    │  input
-    │ ↑↓ pick · ⏎ speak · !3 redo · ⇥ saved · ^V voice · /help │  keys
-    └──────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────┐
+    │ speak                          Daniel · 200wpm · speaking +2 │  status
+    │    1 hello there                                             │  transcript,
+    │    2 how are you doing                                       │  newest last
+    │    3 i'm doing fine, thanks                                  │  ↑↓ picks one
+    │    4 was ist das                                             │
+    │ ──────────────────────────────────────────────────────────── │
+    │ > what i'm typing now                                        │  input
+    │ ⏎ speak · !3 redo · ⇥ saved · ^V voice · ^C stop · ^G keys   │  keys
+    └──────────────────────────────────────────────────────────────┘
 
 Lines queue through one worker thread, so typing ahead speaks in order.
 Arrows pick a past line to say again (wrapping at both ends); !3 says the
-line numbered 3.
+line numbered 3, ^R edits one and ^X deletes one. ^G lists every key.
 
 All the logic lives in core.py, which imports no UI at all, so it is tested
 headless: `uv run pytest`.
@@ -258,7 +259,7 @@ class Speak(App):
         self.sp = core.Speaker(self.cfg, run=run)     # run= lets tests record argv
         self.lines = core.load_transcript()
         self.sel = None
-        self.editing = None         # index being rewritten, if any
+        self.editing = None         # ("line" | "saved", index), if any
 
     # --- layout -------------------------------------------------------------
 

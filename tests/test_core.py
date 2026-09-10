@@ -261,6 +261,26 @@ def test_config_round_trips(paths):
     assert core.load()["saved"] == [{"name": "a", "text": "b"}]
 
 
+def test_save_leaves_the_old_config_intact_if_it_fails(paths, monkeypatch):
+    """A truncating write loses every saved phrase. json.dump serialises
+    incrementally, so a failure part-way leaves a half-written file."""
+    core.save({**core.DEFAULTS, "saved": [{"name": "keep", "text": "keep me"}]})
+
+    class Boom(Exception):
+        pass
+
+    def explode(obj, fp, **kw):
+        fp.write('{"saved": [{"name": "ke')       # a partial write, then die
+        raise Boom
+
+    monkeypatch.setattr(core.json, "dump", explode)
+
+    with pytest.raises(Boom):
+        core.save({**core.DEFAULTS, "saved": [{"name": "new", "text": "new"}]})
+
+    assert core.load()["saved"] == [{"name": "keep", "text": "keep me"}]
+
+
 def test_transcript_appends_in_order(paths):
     core.append_transcript("first")
     core.append_transcript("second")
