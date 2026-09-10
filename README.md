@@ -162,10 +162,11 @@ everywhere once given.
 ## Layout
 
 ```
-src/speak/core.py    speech, config, voice parsing, fuzzy matching — no UI import
-src/speak/app.py     the textual app
-tests/test_core.py   headless
-tests/test_app.py    driven through textual's pilot
+src/speak/core.py         speech, config, voice parsing, fuzzy matching — no UI import
+src/speak/app.py          the textual app
+tests/test_core.py        headless
+tests/test_app.py         driven through textual's pilot
+tests/manual_sigterm.py   needs a real pty; run by hand
 ```
 
 `core.py` deliberately imports no UI, so the logic is testable without a
@@ -174,6 +175,17 @@ terminal:
 ```sh
 uv run pytest
 ```
+
+One check needs a real pty and a real signal, so it is not a pytest — run it
+by hand after touching startup:
+
+```sh
+python3 tests/manual_sigterm.py
+```
+
+It asserts the app turns mouse tracking back off when killed. If it does not,
+the shell is left echoing raw mouse reports as text over the dead screen,
+which looks alarmingly like the app corrupting itself.
 
 ## Licence
 

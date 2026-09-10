@@ -19,6 +19,7 @@ All the logic lives in core.py, which imports no UI at all, so it is tested
 headless: `uv run pytest`.
 """
 
+import signal
 import sys
 
 from rich.text import Text
@@ -558,7 +559,15 @@ def main():
     if not sys.stdout.isatty():
         sys.exit("speak: needs a terminal (stdout is not a tty)")
 
-    Speak().run()
+    app = Speak()
+
+    # Python's default SIGTERM exits without unwinding, so textual never
+    # restores the terminal. Measured: the app turns mouse tracking on
+    # (?1000h ?1003h ?1006h) and a SIGTERM emitted no matching `l` at all —
+    # leaving the shell echoing raw mouse reports as text over a dead screen.
+    signal.signal(signal.SIGTERM, lambda *_: app.exit())
+
+    app.run()
 
 
 if __name__ == "__main__":
