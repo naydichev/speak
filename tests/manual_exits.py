@@ -10,7 +10,7 @@ shell that echoes it, so the screen fills with fragments like `M35;2262;-3M`
 over the dead app's last frame — which reads as the app corrupting itself.
 SIGHUP is the one to watch: it is what a closing terminal window sends.
 """
-import fcntl, os, pty, select, signal, struct, sys, termios, time
+import fcntl, os, pty, select, signal, struct, termios, time
 
 def run(label, finish):
     pid, fd = pty.fork()

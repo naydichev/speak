@@ -11,10 +11,8 @@ import sys
 import pytest
 from textual.widgets import Input, Static
 
-from speak import __version__ as core_version_str
-
-from speak import core
-from speak.app import USAGE, Help, Picker, Speak, main
+from speak import __version__, core
+from speak.app import Help, Picker, Speak, main
 
 
 @pytest.fixture
@@ -74,7 +72,7 @@ def test_version_prints(monkeypatch, capsys):
 
     main()
 
-    assert core_version_str in capsys.readouterr().out
+    assert __version__ in capsys.readouterr().out
 
 
 def test_no_terminal_exits_rather_than_hanging(monkeypatch):
