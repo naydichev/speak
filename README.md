@@ -22,6 +22,22 @@ to say again, edit, or save as a phrase.
 
 macOS only: it shells out to `say`.
 
+## Status
+
+A personal tool, built for one person and tested on one Mac. It is also vibe
+coded — written end to end in conversation with Claude.
+
+What that did and did not cost is worth stating, because the failure mode of
+vibe coding is confident wrong answers, and this hit it repeatedly. An
+emphasis feature shipped twice on measurements that turned out to be a single
+lucky sample, and was cut entirely once every lever was actually measured. So
+the rule here became: every non-obvious constant cites the audio comparison
+that justifies it, in the comment beside it and in the commit that introduced
+it. `git log` is the evidence, and the *Notes on `say`* section below is what
+survived being checked.
+
+Issues and pull requests are best-effort.
+
 ## Install
 
 ```sh
