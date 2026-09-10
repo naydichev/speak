@@ -1,0 +1,32 @@
+name: publish
+
+# Tag-driven: `git tag v0.1.0 && git push --tags` publishes that version.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest      # the wheel is pure Python; only running it needs macOS
+    environment: pypi
+    permissions:
+      id-token: write           # trusted publishing, so there is no API token to leak
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      # Publishing 0.1.0 from a v0.2.0 tag is unrecoverable — PyPI does not
+      # allow re-uploading a version — so fail before the upload, not after.
+      - name: Tag must match the version in pyproject
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(uv version --short)"
+          test "$tag" = "$version" || {
+            echo "tag $tag does not match project version $version"; exit 1;
+          }
+
+      - run: uv build
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
