@@ -41,3 +41,29 @@ Swift helper, a second speech backend, a compile-on-first-run step and two
 incompatible voice-naming schemes.
 
 Leftover markers are harmless: `say` ignores `_` and `*` outright.
+
+**`requestPersonalVoiceAuthorization`'s completion handler cannot be
+trusted.** `--request-personal-voice` shells out to a small compiled helper
+calling that API, because Terminal only appears in Settings → Accessibility →
+Personal Voice once something running as it has asked. The handler is
+documented to fire once the alert is answered; live testing showed it
+doesn't. Triggering the real alert, approving it, and watching the helper's
+own log:
+
+```
+(TextToSpeech) Will request personal voice TCC: (null)
+(TextToSpeech) Did request personal voice TCC for (null). granted=1
+```
+
+— the grant lands under a second later, while `sample`ing the process kept
+showing it parked in the semaphore wait on that same handler minutes on. The
+grant is real; only the callback delivery is broken, at least for a bare
+binary with no app bundle. `personalVoiceAuthorizationStatus`, the
+synchronous property, does update the instant the grant lands, so the helper
+polls that instead of waiting on the handler.
+
+A second, separate finding along the way: `swift -e` cannot be used for this
+at all. It runs the code interpreted inside `swift-frontend`, not as a linked
+binary, and in that mode the handler doesn't merely arrive late — sampling a
+stuck run showed no TCC activity for the process whatsoever, ever. Only a
+`swiftc`-compiled binary reaches tccd whether or not the handler is trusted.

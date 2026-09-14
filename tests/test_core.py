@@ -68,6 +68,61 @@ def test_argv_stays_bare_without_settings(spoken):
     assert sp.argv("hi") == ["say", "--", "hi"]
 
 
+# --- personal voice authorization ---------------------------------------------
+
+class FakeResult:
+    returncode = 0
+
+
+@pytest.fixture
+def personal_voice_bin(tmp_path, monkeypatch):
+    """PERSONAL_VOICE_BIN pointed at a scratch path, absent until a test writes it."""
+    path = tmp_path / "request_personal_voice"
+    monkeypatch.setattr(core, "PERSONAL_VOICE_BIN", str(path))
+    return path
+
+
+def test_request_personal_voice_compiles_once_then_runs(personal_voice_bin, monkeypatch):
+    """It used to shell straight to `swift -e`, which runs interpreted and
+    never calls back -- confirmed by sampling a hung process mid-wait."""
+    compiled = []
+
+    def fake_swiftc(argv, **kw):
+        compiled.append(argv)
+        personal_voice_bin.write_text("")     # stands in for the real binary
+        return FakeResult()
+
+    monkeypatch.setattr(core.subprocess, "run", fake_swiftc)
+
+    calls = []
+    assert core.request_personal_voice(run=lambda argv: calls.append(argv) or FakeResult()) is True
+
+    assert compiled[0][0] == "swiftc"
+    assert calls == [[str(personal_voice_bin)]]
+
+
+def test_request_personal_voice_skips_compile_once_cached(personal_voice_bin, monkeypatch):
+    personal_voice_bin.write_text("")
+
+    def fail(*a, **kw):
+        raise AssertionError("recompiled a binary that was already cached")
+
+    monkeypatch.setattr(core.subprocess, "run", fail)
+
+    calls = []
+    assert core.request_personal_voice(run=lambda argv: calls.append(argv) or FakeResult()) is True
+    assert calls == [[str(personal_voice_bin)]]
+
+
+def test_request_personal_voice_reports_missing_swift(personal_voice_bin, monkeypatch):
+    def fake_swiftc(*a, **kw):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(core.subprocess, "run", fake_swiftc)
+
+    assert core.request_personal_voice(run=lambda argv: FakeResult()) is None
+
+
 # --- queue ------------------------------------------------------------------
 
 def test_lines_speak_in_the_order_typed(spoken):

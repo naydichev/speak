@@ -91,6 +91,21 @@ One step is easy to miss, because the pane does not mention it: training does
 not start on its own. Open the voice's own row and press **Start training…**.
 Until you do, it reads "Recording complete" indefinitely.
 
+A second, separate gate: that "allow apps to use it" pane only lists apps that
+have *asked*. Terminal (or whichever terminal app runs `speak`) never asks on
+its own, so it never appears there, and `say -v "<Personal Voice>"` just
+falls back to a different voice silently — same failure shape as a typo'd
+voice name. `speak --request-personal-voice` makes it ask: run it in the
+terminal you'll use `speak` from (a real window is required — the call
+blocks on a system permission alert) and answer the prompt. It shells out to
+`swift`, so it needs the Xcode Command Line Tools (`xcode-select --install`)
+— nothing else here does.
+
+Then flip Terminal on in the same pane linked above. If Personal Voice stops
+working later for no reason (Apple's own known issue), open Settings →
+Accessibility → Live Speech, enable it, set the Personal Voice, and speak one
+word — that kicks it back into life without a reboot.
+
 ## Notes
 
 `say` has a few undocumented edges — a wrong voice name exits 0 and silently

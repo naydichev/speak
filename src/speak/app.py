@@ -550,11 +550,14 @@ class Speak(App):
 
 USAGE = """speak — a full-screen TUI for macOS's built-in `say`.
 
-usage: speak [--version]
+usage: speak [--version] [--request-personal-voice]
 
-No options worth having: everything is a key or a /command inside the app.
-Type /help there for the list. State lives in
-~/.config/speak/config.json and ~/.local/share/speak/transcript.
+Everything else is a key or a /command inside the app. Type /help there for
+the list. State lives in ~/.config/speak/config.json and
+~/.local/share/speak/transcript.
+
+--request-personal-voice   ask macOS to let this terminal use a trained
+                            Personal Voice, then exit -- see the README.
 """
 
 
@@ -570,6 +573,15 @@ def main():
 
         print(f"speak {__version__}")
         return
+
+    if "--request-personal-voice" in sys.argv[1:]:
+        ok = core.request_personal_voice()
+        if ok is None:
+            sys.exit(
+                "speak: needs the Swift toolchain to ask -- "
+                "run `xcode-select --install`, then try again"
+            )
+        sys.exit(0 if ok else 1)
 
     if not sys.stdout.isatty():
         sys.exit("speak: needs a terminal (stdout is not a tty)")

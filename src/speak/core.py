@@ -185,6 +185,81 @@ def voice_names():
     return [("(system default)", None)] + parse_say_voices(out.stdout)
 
 
+# Terminal only appears in Settings > Accessibility > Personal Voice once
+# something running as it has asked -- `say` itself never does, so a trained
+# voice silently falls back to another one until this runs once.
+#
+# requestPersonalVoiceAuthorization's own completion handler cannot be
+# trusted to fire: confirmed live by triggering the real system alert,
+# approving it, and watching the process's own log --
+#   (TextToSpeech) Did request personal voice TCC for (null). granted=1
+# -- land under a second later, while `sample` kept showing the process
+# still parked in the semaphore wait on that handler minutes on. The grant
+# itself is real; only the callback delivery is broken for a bare binary
+# like this one. personalVoiceAuthorizationStatus, the synchronous property,
+# does update the instant the grant lands, so that's what this polls instead
+# of trusting the handler to ever run.
+PERSONAL_VOICE_SWIFT = """
+import AVFoundation
+
+func describe(_ status: AVSpeechSynthesizer.PersonalVoiceAuthorizationStatus) -> String {
+    switch status {
+    case .authorized: return "authorized -- Terminal can use a trained Personal Voice now"
+    case .denied: return "denied -- allow Terminal in Settings > Accessibility > Personal Voice"
+    case .notDetermined: return "no answer to the prompt"
+    case .unsupported: return "unsupported -- train one in Settings > Accessibility > Personal Voice first"
+    @unknown default: return "unknown status"
+    }
+}
+
+var status = AVSpeechSynthesizer.personalVoiceAuthorizationStatus
+if status == .notDetermined {
+    AVSpeechSynthesizer.requestPersonalVoiceAuthorization { _ in }
+
+    var waited = 0.0
+    while status == .notDetermined && waited < 120 {
+        Thread.sleep(forTimeInterval: 0.2)
+        waited += 0.2
+        status = AVSpeechSynthesizer.personalVoiceAuthorizationStatus
+    }
+}
+print(describe(status))
+"""
+
+
+PERSONAL_VOICE_BIN = os.path.expanduser("~/.cache/speak/request_personal_voice")
+
+
+def request_personal_voice(run=subprocess.run):
+    """Compile the ask once, cache it, then run it. True/False on a clean
+    exit, None if the Swift toolchain isn't installed.
+
+    `swift -e` runs the code interpreted inside swift-frontend rather than as
+    a real linked binary, and in that mode the completion handler for
+    requestPersonalVoiceAuthorization never fires -- confirmed by sampling a
+    hung run: the process sat in a semaphore wait with zero TCC activity in
+    the system log the entire time. A compiled binary is required.
+    """
+    if not os.path.exists(PERSONAL_VOICE_BIN):
+        os.makedirs(os.path.dirname(PERSONAL_VOICE_BIN), exist_ok=True)
+        src = PERSONAL_VOICE_BIN + ".swift"
+
+        with open(src, "w") as f:
+            f.write(PERSONAL_VOICE_SWIFT)
+
+        try:
+            subprocess.run(
+                ["swiftc", "-O", src, "-o", PERSONAL_VOICE_BIN],
+                check=True, capture_output=True,
+            )
+        except FileNotFoundError:
+            return None
+        finally:
+            os.remove(src)
+
+    return run([PERSONAL_VOICE_BIN]).returncode == 0
+
+
 BANG = re.compile(r"!(\d*)")
 
 

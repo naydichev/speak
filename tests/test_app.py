@@ -75,6 +75,26 @@ def test_version_prints(monkeypatch, capsys):
     assert __version__ in capsys.readouterr().out
 
 
+def test_request_personal_voice_exits_without_launching(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["speak", "--request-personal-voice"])
+    monkeypatch.setattr(core, "request_personal_voice", lambda: True)
+
+    with pytest.raises(SystemExit) as raised:
+        main()
+
+    assert raised.value.code == 0
+
+
+def test_request_personal_voice_reports_missing_swift(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["speak", "--request-personal-voice"])
+    monkeypatch.setattr(core, "request_personal_voice", lambda: None)
+
+    with pytest.raises(SystemExit) as raised:
+        main()
+
+    assert "xcode-select" in str(raised.value.code)
+
+
 def test_no_terminal_exits_rather_than_hanging(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["speak"])
     monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
